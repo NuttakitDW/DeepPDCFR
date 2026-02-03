@@ -1,0 +1,14 @@
+Output,Description,Source,Size,Formula
+strategy,Action probabilities per hand,Model,num_actions,Softmax activation
+ev,Expected value per hand,Model,1,Linear activation
+equity,Win probability per hand,Model,1,Sigmoid activation (0-1)
+actionEv,EV of each action per hand,Model,num_actions,Linear activation
+eqr,Equity realization,Derive,1,ev / (pot × equity)
+weights,Hand reach probability,Derive,1326,Parse from range string
+normalizer,Normalized weights,Derive,1326,weight / sum(weights)
+eqrBase,Base for EQR calculation,Derive,1,pot / 2
+currentPlayer,OOP/IP/Chance/Terminal,Derive,1,From game state
+numActions,Action count,Derive,1,From tree config
+combos,Hand combination counts,Derive,1,Count hands not blocked by board
+exploitability,Solution quality,Not needed,-,Training metric only
+regrets,CFR internal values,Not needed,-,CFR internal only

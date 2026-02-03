@@ -1,0 +1,15 @@
+Feature,Value,Method,Encoding,Size,Description
+Stack,30bb,Fixed,stack / 200,1,Effective stack size in big blinds
+Pot,3-25bb,Random sample,pot / 100,1,Starting pot size in big blinds
+SPR,Derived,pot ÷ stack,log(spr+1) / 4,1,Stack to pot ratio
+Flop,0-1754,Random + Embedding,Embedding lookup,32,Canonical flop ID after isomorphism
+Turn,0-51,Isomorphic + Embedding,Embedding lookup,8,Turn card with isomorphism
+River,0-51,Isomorphic + Embedding,Embedding lookup,8,River card with isomorphism
+OOP Range,Preflop range,Random archetype + Autoencoder,Range → 1326 sparse → 64,64,Out-of-position player hand range
+IP Range,Preflop range,Random archetype + Autoencoder,Range → 1326 sparse → 64,64,In-position player hand range
+Bet Facing,% of pot,Inside tree,bet / pot,1,Current bet to call as fraction of pot
+Street,F/T/R,Inside tree,One-hot [1 0 0],3,Current street (Flop/Turn/River)
+Who Acts,OOP/IP,Inside tree,Binary [0 or 1],1,Current player to act
+Player Hand,0-1325,Inside tree,Embedding lookup,16,Specific hand being evaluated
+Pot Odds,Derived,bet / (pot + bet),Float,1,Pot odds for calling decision
+Stack Remaining,Derived,(stack - bet) / 200,Float,1,Stack remaining after action
