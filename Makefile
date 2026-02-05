@@ -4,7 +4,7 @@
 ALGO ?= VRDeepPDCFRPlus
 GAME ?= FHP
 SEED ?= 0
-DEVICE ?= cuda
+DEVICE ?= cpu
 MAX_TIME ?= 0
 SAVE_INTERVAL ?= 600
 

@@ -27,6 +27,6 @@ baseline_batch_size: 2048
 baseline_network_train_steps: 1000
 
 save_log: True
-device: cuda
+device: cpu
 max_time: 0
 save_interval: 600
