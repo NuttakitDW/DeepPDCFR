@@ -42,6 +42,8 @@ class VRDeepDCFRPlus(DeepCumuAdv):
         alpha=1.5,
         device="cpu",
         seed=0,
+        max_time=0,
+        save_interval=600,
     ):
         self.alpha = alpha
         super().__init__(
@@ -72,6 +74,8 @@ class VRDeepDCFRPlus(DeepCumuAdv):
             num_random_games,
             device,
             seed,
+            max_time,
+            save_interval,
         )
 
     def init_regret_trainers(self):
@@ -126,6 +130,8 @@ class VRDeepPDCFRPlus(DeepCumuAdv):
         num_random_games=20000,
         device="cpu",
         seed=0,
+        max_time=0,
+        save_interval=600,
     ):
         self.alpha = alpha
         self.reinitialize_imm_regret_networks = reinitialize_imm_regret_networks
@@ -157,6 +163,8 @@ class VRDeepPDCFRPlus(DeepCumuAdv):
             num_random_games,
             device,
             seed,
+            max_time,
+            save_interval,
         )
 
     def init_regret_trainers(self):

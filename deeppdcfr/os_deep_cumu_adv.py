@@ -1,5 +1,7 @@
 import math
 import random
+import time
+from pathlib import Path
 
 import numpy as np
 
@@ -50,8 +52,12 @@ class DeepCumuAdv:
         num_random_games=20000,
         device="cpu",
         seed=0,
+        max_time=0,
+        save_interval=600,
     ):
         self.game_name = game_name
+        self.max_time = max_time
+        self.save_interval = save_interval
         self.play_against_random = play_against_random
         self.logger = logger or Logger(writer_strings=[])
         self.game = self.load_game()
@@ -146,9 +152,38 @@ class DeepCumuAdv:
         )
 
     def solve(self):
+        self.start_time = time.time()
+        self.last_save_time = self.start_time
         self.evaluate()
         for _ in range(self.num_iterations):
+            if self.max_time > 0 and time.time() - self.start_time >= self.max_time:
+                self.logger.info("Time limit reached ({:.0f}s). Stopping training.".format(
+                    time.time() - self.start_time
+                ))
+                break
             self.iteration()
+            if self.save_interval > 0 and time.time() - self.last_save_time >= self.save_interval:
+                self.save_models(checkpoint=True)
+                self.last_save_time = time.time()
+        self.save_models()
+
+    def save_models(self, checkpoint=False):
+        save_dir = Path("models") / type(self).__name__ / self.game_name
+        save_dir.mkdir(parents=True, exist_ok=True)
+        if checkpoint:
+            elapsed = int(time.time() - self.start_time)
+            suffix = "_checkpoint_{}s".format(elapsed)
+        else:
+            suffix = ""
+        torch.save(self.ave_policy_trainer.model.state_dict(), save_dir / "ave_policy{}.pt".format(suffix))
+        for i, trainer in enumerate(self.regret_trainers):
+            torch.save(trainer.model.state_dict(), save_dir / "regret_player_{}{}.pt".format(i, suffix))
+            if hasattr(trainer, "imm_model"):
+                torch.save(trainer.imm_model.state_dict(), save_dir / "imm_regret_player_{}{}.pt".format(i, suffix))
+        if self.use_baseline:
+            torch.save(self.q_value_trainer.model.state_dict(), save_dir / "q_value{}.pt".format(suffix))
+        label = "Checkpoint" if checkpoint else "Final models"
+        self.logger.info("{} saved to {}".format(label, save_dir.absolute()))
 
     def iteration(self):
         self.num_iteration += 1
