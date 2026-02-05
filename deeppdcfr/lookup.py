@@ -8,15 +8,6 @@ class Lookup:
         file = Path(__file__).parents[1].absolute() / "matrix" / "random_board_wp.npy"
         self.random_board_wp = np.load(str(file))
 
-        self._flop_matrix = None
-        self._flop_matrix_path = Path(__file__).parents[1].absolute() / "matrix" / "flop_matrix.npy"
-
-    @property
-    def flop_matrix(self):
-        if self._flop_matrix is None:
-            self._flop_matrix = np.load(str(self._flop_matrix_path))
-        return self._flop_matrix
-
     def check(self, a, b):
         if b == None or a == None:
             return False
@@ -52,13 +43,17 @@ class Lookup:
         return wp
 
     def calc3(self, hand1, board, opponent_range):
-        hand_ids = [card_tools.card_to_id(card) for card in hand1]
-        board_ids = [card_tools.card_to_id(card) for card in board]
-        hand_ids.sort()
-        board_ids.sort()
-        return self.flop_matrix[
-            board_ids[0], board_ids[1], board_ids[2], hand_ids[0], hand_ids[1]
-        ]
+        board_ids = np.array([card_tools.card_to_id(c) for c in board], dtype=int)
+        my_cards = np.array([[*board_ids, card_tools.card_to_id(hand1[0]), card_tools.card_to_id(hand1[1])]], dtype=int)
+        my_strength = card_tools.evaluate(my_cards)[0]
+
+        all_hands = np.tile(board_ids, (1326, 1))
+        all_hands = np.concatenate([all_hands, card_tools.hand_ids.astype(int)], axis=1)
+        all_strengths = card_tools.evaluate(all_hands)
+
+        wins = (my_strength > all_strengths).astype(float)
+        ties = (my_strength == all_strengths).astype(float) * 0.5
+        return np.dot(wins + ties, opponent_range)
 
     def calc2(self, hand1, board, opponent_range):
         wp = 0
