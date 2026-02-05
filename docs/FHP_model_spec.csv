@@ -1,0 +1,99 @@
+Network,Role,Input Size,Input Description,Output Size,Output Description
+Advantage (Regret),Learns cumulative counterfactual regret per action for traversing player,162,Information state tensor (see Input Breakdown below),3,"Regret values: [Fold, Call, Raise/Bet] (masked by legal actions)"
+Immediate Regret,Learns single-iteration immediate counterfactual regret,162,Information state tensor (same as Advantage),3,"Immediate regret values: [Fold, Call, Raise/Bet] (masked by legal actions)"
+Average Policy,Learns the average strategy across all iterations,162,Information state tensor (same as Advantage),3,"Action probabilities (softmax): [Fold, Call, Raise/Bet] (masked by legal actions)"
+Q-Value (Baseline),Estimates state-action values for variance reduction,324,"History tensor: concat(P0 info_state, P1 info_state)",3,"Q-values per action: [Fold, Call, Raise/Bet]"
+
+Input Breakdown (Information State Tensor - 162 elements)
+Index Range,Size,Encoding,Description
+[0-1],2,One-hot,Active player: [Player 0 = 1 0 | Player 1 = 0 1]
+[2-53],git,Multi-hot,"Private hole cards (2 cards marked as 1): card_index = rank * 4 + suit, ranks: 2=0 3=1 4=2 5=3 6=4 7=5 8=6 9=7 T=8 J=9 Q=10 K=11 A=12, suits: c=0 d=1 h=2 s=3"
+[54-105],52,Multi-hot,"Board cards (0 pre-flop, 3 on flop marked as 1): same card encoding as hole cards"
+[106-161],56,Binary per action slot,"Betting history: 2 rounds x 28 slots. Each action position uses 2 bits [Call/Check, Raise/Bet]. Round 0 actions start at index 114. Round 1 actions start at index 124."
+
+Output Breakdown (Action Space - 3 actions)
+Action Index,Action Name,Description
+0,Fold,Surrender hand and forfeit pot
+1,Call/Check,Match current bet (Call) or pass when no bet (Check)
+2,Raise/Bet,Increase bet by fixed amount (100 per round in FHP)
+
+Card Index Reference (for indices [2-53] and [54-105])
+Card Index,Card,Rank,Suit
+0,2c,2,clubs
+1,2d,2,diamonds
+2,2h,2,hearts
+3,2s,2,spades
+4,3c,3,clubs
+5,3d,3,diamonds
+6,3h,3,hearts
+7,3s,3,spades
+8,4c,4,clubs
+9,4d,4,diamonds
+10,4h,4,hearts
+11,4s,4,spades
+12,5c,5,clubs
+13,5d,5,diamonds
+14,5h,5,hearts
+15,5s,5,spades
+16,6c,6,clubs
+17,6d,6,diamonds
+18,6h,6,hearts
+19,6s,6,spades
+20,7c,7,clubs
+21,7d,7,diamonds
+22,7h,7,hearts
+23,7s,7,spades
+24,8c,8,clubs
+25,8d,8,diamonds
+26,8h,8,hearts
+27,8s,8,spades
+28,9c,9,clubs
+29,9d,9,diamonds
+30,9h,9,hearts
+31,9s,9,spades
+32,Tc,10,clubs
+33,Td,10,diamonds
+34,Th,10,hearts
+35,Ts,10,spades
+36,Jc,Jack,clubs
+37,Jd,Jack,diamonds
+38,Jh,Jack,hearts
+39,Js,Jack,spades
+40,Qc,Queen,clubs
+41,Qd,Queen,diamonds
+42,Qh,Queen,hearts
+43,Qs,Queen,spades
+44,Kc,King,clubs
+45,Kd,King,diamonds
+46,Kh,King,hearts
+47,Ks,King,spades
+48,Ac,Ace,clubs
+49,Ad,Ace,diamonds
+50,Ah,Ace,hearts
+51,As,Ace,spades
+
+Network Architecture (all networks)
+Parameter,Value
+Type,MLP (Multi-Layer Perceptron)
+Hidden Layers,3
+Hidden Units per Layer,64
+Activation,ReLU (hidden layers) / None (output)
+Weight Init,Sonnet-style truncated normal
+Output Init,Zero-initialized
+
+Training Configuration
+Parameter,Value
+Algorithm,VRDeepPDCFRPlus
+Game,FHP (Fixed-Limit Hold'em Poker 2-player 2-round)
+Rounds,2 (Pre-flop + Flop with 3 board cards)
+Blinds,SB=50 BB=100
+Raise Size,100 per round (fixed limit)
+Max Raises,3 per round
+Max Utility,700
+Min Utility,-700
+Num Traversals per Iteration,10000
+Advantage Buffer Size,150000
+Policy Buffer Size,1000000
+Batch Size,2048
+Learning Rate,0.001
+Evaluation,Play against random opponents (large_game=True)
