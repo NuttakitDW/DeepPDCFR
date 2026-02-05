@@ -11,3 +11,4 @@ Bet Facing,% of pot,Inside tree,bet / pot,1,Current bet to call as fraction of p
 Street,F/T/R,Inside tree,One-hot [1 0 0],3,Current street (Flop/Turn/River)
 Who Acts,OOP/IP,Inside tree,Binary [0 or 1],1,Current player to act
 Pot Odds,Derived,bet / (pot + bet),Float,1,Pot odds for calling decision
+Player Hand,1326 combos,Sampled from game tree,Card embedding,16,Specific hole cards (e.g. AhKd) sampled during CFR traversal
