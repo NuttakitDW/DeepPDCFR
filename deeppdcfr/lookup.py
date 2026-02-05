@@ -8,8 +8,14 @@ class Lookup:
         file = Path(__file__).parents[1].absolute() / "matrix" / "random_board_wp.npy"
         self.random_board_wp = np.load(str(file))
 
-        file = Path(__file__).parents[1].absolute() / "matrix" / "flop_matrix.npy"
-        self.flop_matrix = np.load(str(file))
+        self._flop_matrix = None
+        self._flop_matrix_path = Path(__file__).parents[1].absolute() / "matrix" / "flop_matrix.npy"
+
+    @property
+    def flop_matrix(self):
+        if self._flop_matrix is None:
+            self._flop_matrix = np.load(str(self._flop_matrix_path))
+        return self._flop_matrix
 
     def check(self, a, b):
         if b == None or a == None:
