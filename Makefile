@@ -5,17 +5,11 @@ ALGO ?= VRDeepPDCFRPlus
 GAME ?= FHP
 SEED ?= 0
 DEVICE ?= cuda
-MAX_TIME ?= 3600
+MAX_TIME ?= 0
 SAVE_INTERVAL ?= 600
 
 start:
-	python scripts/run.py with configs/$(ALGO).yaml \
-		game_name=$(GAME) \
-		seed=$(SEED) \
-		device=$(DEVICE) \
-		max_time=$(MAX_TIME) \
-		save_interval=$(SAVE_INTERVAL) \
-		--force
+	python scripts/run.py with configs/$(ALGO).yaml game_name=$(GAME) seed=$(SEED) device=$(DEVICE) max_time=$(MAX_TIME) save_interval=$(SAVE_INTERVAL) --force
 
 install:
 	pip install -e .

@@ -1,8 +1,8 @@
-game_name: KuhnPoker
+game_name: FHP
 algo_name: VRDeepPDCFRPlus
 
 
-num_episodes: 10000000
+num_episodes: 10000000000
 advantage_buffer_size: 150000
 ave_policy_buffer_size: 1000000
 learning_rate: 1.0e-3
@@ -28,4 +28,5 @@ baseline_network_train_steps: 1000
 
 save_log: True
 device: cuda
-max_time: 3600
+max_time: 0
+save_interval: 600
