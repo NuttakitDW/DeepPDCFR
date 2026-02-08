@@ -22,7 +22,7 @@ alpha: 2.3
 # Policy network
 ave_policy_buffer_size: 20000
 ave_policy_batch_size: 512
-ave_policy_network_train_steps: 2000
+ave_policy_network_train_steps: 200
 gamma: 2
 
 # Shared
