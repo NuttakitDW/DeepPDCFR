@@ -77,8 +77,12 @@ class SolverQuery:
         self.model = BulkPolicyModelV2(**model_kwargs).to(device)
         path = self.model_path / "ave_policy.pt"
         if not path.exists():
+            # Fall back to latest checkpoint file
+            candidates = sorted(self.model_path.glob("ave_policy_checkpoint_*.pt"))
+            path = candidates[-1] if candidates else None
+        if path is None or not path.exists():
             raise FileNotFoundError(
-                f"Model checkpoint not found: {path}. "
+                f"No ave_policy model found in {self.model_path}. "
                 f"Train a model first or check the path."
             )
         state_dict = torch.load(path, map_location=device, weights_only=True)
