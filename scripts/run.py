@@ -16,6 +16,46 @@ def config():
     algo_name = "CFR"
     game_name = "KuhnPoker"
     log_folder = "logs"
+
+    # Scenario
+    stack_range = [20, 200]
+    pot_range = [3, 60]
+
+    # Training
+    num_iterations = 0
+    num_traversals = 500
+    evaluation_frequency = 3
+    epsilon = 0.6
+
+    # Regret networks
+    advantage_buffer_size = 10000
+    advantage_batch_size = 512
+    advantage_network_train_steps = 500
+    reinitialize_advantage_networks = False
+    reinitialize_imm_regret_networks = True
+    use_regret_matching_argmax = True
+    alpha = 2.3
+
+    # Policy network
+    ave_policy_buffer_size = 20000
+    ave_policy_batch_size = 512
+    ave_policy_network_train_steps = 2000
+    gamma = 2
+
+    # Shared
+    learning_rate = 3.0e-4
+
+    # V2 model architecture
+    card_embed_dim = 64
+    situation_hidden = 384
+    combo_hidden = 192
+    fusion_hidden = 384
+    fusion_residual_blocks = 2
+
+    # System
+    device = "cpu"
+    max_time = 0
+    save_interval = 600
     resume = False
 
     # logger
