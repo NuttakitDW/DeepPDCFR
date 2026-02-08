@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 from typing import Optional
 
 import logging
@@ -551,6 +552,7 @@ class BulkRegretTrainer:
         scaler = self._scaler
         last_loss = None
         log_every = 1
+        last_log_t = time.perf_counter()
         for step in range(self.train_steps):
             (board_ids, sit_numerical, combo_card_ids, hand_features,
              cf_regrets, action_masks, combo_masks, _iterations) = self.buffer.sample(self.batch_size)
@@ -602,9 +604,12 @@ class BulkRegretTrainer:
 
             last_loss = loss.detach()
             if logger and (step % log_every == 0 or step == self.train_steps - 1):
+                now = time.perf_counter()
+                dt_ms = (now - last_log_t) * 1000.0
+                last_log_t = now
                 logger.info(
                     f"[{step}/{self.train_steps}] regret loss: {loss.detach().item():.6f}, "
-                    f"imm: {imm_loss.detach().item():.6f}"
+                    f"imm: {imm_loss.detach().item():.6f}, dt_ms: {dt_ms:.1f}"
                 )
 
         self.target_model.load_state_dict(self.model.state_dict())
@@ -732,7 +737,9 @@ class BulkPolicyTrainer:
             return 0.0
 
         scaler = self._scaler
-        last_loss = 0.0
+        last_loss = None
+        log_every = 1
+        last_log_t = time.perf_counter()
         for step in range(self.train_steps):
             (board_ids, sit_numerical, combo_card_ids, hand_features,
              policies, action_masks, combo_masks, iterations) = self.buffer.sample(self.batch_size)
@@ -766,11 +773,16 @@ class BulkPolicyTrainer:
                 loss.backward()
                 self.optimizer.step()
 
-            last_loss = loss.item()
-            if logger and (step % 1 == 0 or step == self.train_steps - 1):
-                logger.info(f"[{step}/{self.train_steps}] policy loss: {loss.item():.6f}")
+            last_loss = loss.detach()
+            if logger and (step % log_every == 0 or step == self.train_steps - 1):
+                now = time.perf_counter()
+                dt_ms = (now - last_log_t) * 1000.0
+                last_log_t = now
+                logger.info(
+                    f"[{step}/{self.train_steps}] policy loss: {loss.detach().item():.6f}, dt_ms: {dt_ms:.1f}"
+                )
 
-        return last_loss
+        return float(last_loss.detach().item()) if last_loss is not None else 0.0
 
     def get_policy(
         self,
