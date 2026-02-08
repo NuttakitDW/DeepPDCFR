@@ -556,6 +556,10 @@ class BulkRegretTrainer:
         for step in range(self.train_steps):
             (board_ids, sit_numerical, combo_card_ids, hand_features,
              cf_regrets, action_masks, combo_masks, _iterations) = self.buffer.sample(self.batch_size)
+            if logger and step == 0:
+                logger.info(
+                    f"[reg] batch_size={self.batch_size}, sampled_B={board_ids.shape[0]}, buffer_len={len(self.buffer)}"
+                )
 
             board_mask = (board_ids != 52).float()
 
@@ -743,6 +747,10 @@ class BulkPolicyTrainer:
         for step in range(self.train_steps):
             (board_ids, sit_numerical, combo_card_ids, hand_features,
              policies, action_masks, combo_masks, iterations) = self.buffer.sample(self.batch_size)
+            if logger and step == 0:
+                logger.info(
+                    f"[pol] batch_size={self.batch_size}, sampled_B={board_ids.shape[0]}, buffer_len={len(self.buffer)}"
+                )
 
             board_mask = (board_ids != 52).float()
 
