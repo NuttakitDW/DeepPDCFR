@@ -13,7 +13,7 @@ train_fresh:
 	python scripts/run.py with $(CONFIG) device=$(DEVICE) resume=false
 
 serve:
-	uvicorn api.server:app --host 0.0.0.0 --port 8000
+	CONFIG=$(CONFIG) uvicorn api.server:app --host 0.0.0.0 --port 8000
 
 mock:
 	uvicorn api.mock_server:app --port 8000

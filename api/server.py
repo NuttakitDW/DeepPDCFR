@@ -13,6 +13,7 @@ Then open http://localhost:8000/docs for Swagger UI.
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -49,8 +50,8 @@ _solver: SolverQuery | None = None
 # ---------------------------------------------------------------------------
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_DEFAULT_CONFIG = _PROJECT_ROOT / "configs" / "NLHEGeneralized.yaml"
-_DEFAULT_MODEL_DIR = _PROJECT_ROOT / "models" / "NLHEGeneralized"
+_DEFAULT_CONFIG = _PROJECT_ROOT / (os.environ.get("CONFIG") or "configs/NLHEGeneralized.yaml")
+_DEFAULT_MODEL_DIR = _PROJECT_ROOT / (os.environ.get("MODEL_DIR") or "models/NLHEGeneralized")
 
 # Model kwargs extracted from config (only architecture-related keys)
 _MODEL_KWARG_KEYS = {
