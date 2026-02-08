@@ -600,7 +600,7 @@ class BulkRegretTrainer:
                 self.imm_optimizer.step()
 
             last_loss = loss.item()
-            if logger and (step % 50 == 0 or step == self.train_steps - 1):
+            if logger and (step % 1 == 0 or step == self.train_steps - 1):
                 logger.info(
                     f"[{step}/{self.train_steps}] regret loss: {loss.item():.6f}, "
                     f"imm: {imm_loss.item():.6f}"
