@@ -598,12 +598,22 @@ class PostflopVRDeepPDCFR:
         )
 
     def _collect_training_data_mp(self, scenario: Scenario, traverser: int):
+        def _cpu_state_dict(m: torch.nn.Module) -> dict:
+            # torch.compile wraps modules in an OptimizedModule that prefixes keys with "_orig_mod.".
+            # Workers disable compile, so we always serialize the original module's keys.
+            orig = getattr(m, "_orig_mod", None)
+            sd = (orig.state_dict() if orig is not None else m.state_dict())
+            # Defensive: if someone passed in a prefixed dict, strip it.
+            if sd and all(k.startswith("_orig_mod.") for k in sd.keys()):
+                sd = {k[len("_orig_mod."):]: v for k, v in sd.items()}
+            return {k: v.detach().cpu() for k, v in sd.items()}
+
         # Snapshot model weights once per traversal phase.
         reg_state = []
         imm_state = []
         for p in range(2):
-            reg_state.append({k: v.detach().cpu() for k, v in self.regret_trainers[p].model.state_dict().items()})
-            imm_state.append({k: v.detach().cpu() for k, v in self.regret_trainers[p].imm_model.state_dict().items()})
+            reg_state.append(_cpu_state_dict(self.regret_trainers[p].model))
+            imm_state.append(_cpu_state_dict(self.regret_trainers[p].imm_model))
 
         # Split traversals across workers.
         workers = self.traversal_workers
