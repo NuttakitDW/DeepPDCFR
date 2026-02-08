@@ -1,22 +1,8 @@
-.PHONY: start install test clean
+train:
+	python -m deeppdcfr.exp configs/NLHEGeneralized.yaml
 
-# Default training config
-ALGO ?= VRDeepPDCFRPlus
-GAME ?= FHP
-SEED ?= 0
-DEVICE ?= cpu
-MAX_TIME ?= 0
-SAVE_INTERVAL ?= 600
+serve:
+	uvicorn api.server:app --port 8000
 
-start:
-	python scripts/run.py with configs/$(ALGO).yaml game_name=$(GAME) seed=$(SEED) device=$(DEVICE) max_time=$(MAX_TIME) save_interval=$(SAVE_INTERVAL) --force
-
-install:
-	pip install -e .
-	cd matrix && unzip -o data.zip && cd ..
-
-test:
-	python -m pytest tests/ -v
-
-clean:
-	rm -rf logs/ models/ __pycache__ deeppdcfr/__pycache__
+mock:
+	uvicorn api.mock_server:app --port 8000
