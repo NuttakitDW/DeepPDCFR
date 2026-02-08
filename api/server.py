@@ -51,7 +51,6 @@ _solver: SolverQuery | None = None
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_CONFIG = _PROJECT_ROOT / (os.environ.get("CONFIG") or "configs/NLHEGeneralized.yaml")
-_DEFAULT_MODEL_DIR = _PROJECT_ROOT / (os.environ.get("MODEL_DIR") or "models/NLHEGeneralized")
 
 # Model kwargs extracted from config (only architecture-related keys)
 _MODEL_KWARG_KEYS = {
@@ -68,12 +67,14 @@ def _load_config(config_path: Path) -> dict:
         return yaml.safe_load(f)
 
 
-def _init_solver(config_path: Path | None = None, model_dir: Path | None = None) -> SolverQuery:
+def _init_solver(config_path: Path | None = None) -> SolverQuery:
     config_path = config_path or _DEFAULT_CONFIG
-    model_dir = model_dir or _DEFAULT_MODEL_DIR
 
     cfg = _load_config(config_path)
     model_kwargs = {k: cfg[k] for k in _MODEL_KWARG_KEYS if k in cfg}
+
+    # Resolve model dir from config's save_dir
+    model_dir = _PROJECT_ROOT / cfg.get("save_dir", "models/NLHEGeneralized")
 
     # Use CPU for inference by default (fast enough for single queries,
     # avoids GPU memory contention with training)
@@ -95,12 +96,8 @@ def _init_solver(config_path: Path | None = None, model_dir: Path | None = None)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _solver
-    try:
-        _solver = _init_solver()
-        logger.info("Solver model loaded successfully")
-    except FileNotFoundError as e:
-        logger.warning("Model not found, server will start without solver: %s", e)
-        _solver = None
+    _solver = _init_solver()
+    logger.info("Solver model loaded successfully")
     yield
     _solver = None
 
