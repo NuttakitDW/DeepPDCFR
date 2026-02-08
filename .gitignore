@@ -162,4 +162,6 @@ game/*
 .DS_Store
 data.csv
 *.npy
+*.pt
 /game-export
+/models/
