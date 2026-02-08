@@ -64,6 +64,8 @@ def config():
     traversal_mp_context = "spawn"
     traversal_chunk_size = 0  # 0 = auto
 
+    save_dir = "models/NLHEGeneralized"
+
     # logger
     writer_strings = ["stdout"]
     save_log = False
