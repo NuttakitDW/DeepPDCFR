@@ -411,6 +411,7 @@ class PostflopVRDeepPDCFR:
         traversal_workers: int = 1,
         traversal_device: Optional[str] = None,
         traversal_mp_context: str = "spawn",
+        traversal_chunk_size: int = 0,
         logger: Optional[Logger] = None,
         # V2 model architecture params
         card_embed_dim: int = 64,
@@ -438,6 +439,7 @@ class PostflopVRDeepPDCFR:
         self.traversal_workers = max(1, int(traversal_workers))
         self.traversal_device = traversal_device or device
         self.traversal_mp_context = traversal_mp_context
+        self.traversal_chunk_size = max(0, int(traversal_chunk_size))
 
         # Initialize scenario generator
         self.scenario_gen = ScenarioGenerator(
@@ -615,20 +617,21 @@ class PostflopVRDeepPDCFR:
             reg_state.append(_cpu_state_dict(self.regret_trainers[p].model))
             imm_state.append(_cpu_state_dict(self.regret_trainers[p].imm_model))
 
-        # Split traversals across workers.
+        # Split traversals into chunks so we can stream progress while workers run.
         workers = self.traversal_workers
         n = int(self.num_traversals)
-        counts = [n // workers] * workers
-        for i in range(n % workers):
-            counts[i] += 1
+        chunk = self.traversal_chunk_size if self.traversal_chunk_size > 0 else max(1, n // max(1, workers * 4))
 
         # Worker payload keeps config minimal; workers build their own game/encoder.
         payloads = []
-        for wid, w_n in enumerate(counts):
-            if w_n <= 0:
-                continue
+        remaining = n
+        task_id = 0
+        while remaining > 0:
+            w_n = min(chunk, remaining)
+            wid = task_id % workers
             payloads.append(
                 dict(
+                    task_id=task_id,
                     wid=wid,
                     n_traversals=w_n,
                     traverser=traverser,
@@ -638,11 +641,13 @@ class PostflopVRDeepPDCFR:
                     seed=self.seed,
                 )
             )
+            remaining -= w_n
+            task_id += 1
 
         t0 = time.perf_counter()
         ctx = self._mp_ctx()
         self.logger.info(
-            f"[it {self.num_iteration}][p{traverser}] mp traverse | workers={workers} device={self.traversal_device}"
+            f"[it {self.num_iteration}][p{traverser}] mp traverse | workers={workers} device={self.traversal_device} chunks={len(payloads)} chunk_size={chunk}"
         )
         # NOTE: With spawn, sending large tensors per-task is extremely slow (and kills parallelism).
         # Push common state once via the pool initializer.
@@ -665,37 +670,43 @@ class PostflopVRDeepPDCFR:
                 fusion_residual_blocks=self.regret_trainers[0].model_kwargs["fusion_residual_blocks"],
             ),
         )
-        with ctx.Pool(processes=workers, initializer=_mp_worker_init, initargs=init_args) as pool:
-            results = pool.map(_mp_collect_traversals, payloads)
-
-        # Merge: parent applies the actual reservoir sampling.
         total_nodes = 0
         total_ep = 0
-        for r in results:
-            total_ep += r["episodes"]
-            self.nodes_touched += r["nodes_touched"]
-            total_nodes += r["nodes_touched"]
+        done_tasks = 0
+        total_tasks = len(payloads)
+        progress_interval = max(1, total_tasks // 8)
+        with ctx.Pool(processes=workers, initializer=_mp_worker_init, initargs=init_args) as pool:
+            for r in pool.imap_unordered(_mp_collect_traversals, payloads):
+                total_ep += r["episodes"]
+                self.nodes_touched += r["nodes_touched"]
+                total_nodes += r["nodes_touched"]
 
-            for node in r["regret_nodes"]:
-                self.regret_trainers[traverser].add_node_data(
-                    node["board_ids"],
-                    node["sit_numerical"],
-                    node["combo_card_ids"],
-                    node["hand_features"],
-                    node["values"],
-                    node["action_mask"],
-                    node["iteration"],
-                )
-            for node in r["policy_nodes"]:
-                self.ave_policy_trainer.add_node_data(
-                    node["board_ids"],
-                    node["sit_numerical"],
-                    node["combo_card_ids"],
-                    node["hand_features"],
-                    node["values"],
-                    node["action_mask"],
-                    node["iteration"],
-                )
+                for node in r["regret_nodes"]:
+                    self.regret_trainers[traverser].add_node_data(
+                        node["board_ids"],
+                        node["sit_numerical"],
+                        node["combo_card_ids"],
+                        node["hand_features"],
+                        node["values"],
+                        node["action_mask"],
+                        node["iteration"],
+                    )
+                for node in r["policy_nodes"]:
+                    self.ave_policy_trainer.add_node_data(
+                        node["board_ids"],
+                        node["sit_numerical"],
+                        node["combo_card_ids"],
+                        node["hand_features"],
+                        node["values"],
+                        node["action_mask"],
+                        node["iteration"],
+                    )
+
+                done_tasks += 1
+                if done_tasks % progress_interval == 0 or done_tasks == total_tasks:
+                    self.logger.info(
+                        f"[it {self.num_iteration}][p{traverser}] mp traverse progress | tasks={done_tasks}/{total_tasks} ep={total_ep}/{n}"
+                    )
 
         self.episode += total_ep
         dt = (time.perf_counter() - t0) * 1000.0
@@ -1043,6 +1054,7 @@ class PostflopVRDeepPDCFR:
 
 def _mp_collect_traversals(payload: dict) -> dict:
     # Common state is configured by _mp_worker_init.
+    task_id = int(payload["task_id"])
     wid = int(payload["wid"])
     seed = int(payload["seed"])
     traverser = int(payload["traverser"])
@@ -1052,7 +1064,7 @@ def _mp_collect_traversals(payload: dict) -> dict:
     device = payload["traversal_device"]
 
     # Per-worker deterministic seed (best-effort; scheduling still affects reservoir replacement order).
-    worker_seed = seed + 10_000_000 * (wid + 1) + 1000 * num_iteration + 10 * traverser
+    worker_seed = seed + 10_000_000 * (wid + 1) + 1000 * num_iteration + 10 * traverser + task_id
     set_seed(worker_seed)
 
     # Build a local solver instance for traversal-only, load snapshot weights.

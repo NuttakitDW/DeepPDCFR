@@ -60,6 +60,7 @@ def config():
     traversal_workers = 1
     traversal_device = None  # default: same as `device`
     traversal_mp_context = "spawn"
+    traversal_chunk_size = 0  # 0 = auto
 
     # logger
     writer_strings = ["stdout"]

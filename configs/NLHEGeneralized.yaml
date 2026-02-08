@@ -44,3 +44,4 @@ seed: 0
 traversal_workers: 1
 traversal_device: null
 traversal_mp_context: spawn
+traversal_chunk_size: 0
