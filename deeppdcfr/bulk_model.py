@@ -764,17 +764,24 @@ class BulkPolicyTrainer:
 
             self.optimizer.zero_grad(set_to_none=True)
             with self._autocast():
-                pred = self.model(
+                # Get raw logits (bypass softmax) for numerically stable CE
+                logits = self.model.regret_model(
                     board_ids, board_mask, sit_numerical,
                     combo_card_ids, hand_features, action_masks,
                 )
+                mask_expanded = action_masks.unsqueeze(1).expand_as(logits)
+                logits = torch.where(
+                    mask_expanded > 0, logits,
+                    torch.tensor(-1e20, device=logits.device),
+                )
+                log_probs = F.log_softmax(logits, dim=-1)
 
-                # Weighted masked MSE
+                # Weighted masked cross-entropy: -Σ target_i * log(pred_i)
                 full_mask = combo_masks.unsqueeze(-1) * action_masks.unsqueeze(1)
-                diff = (pred - policies) ** 2
-                weighted_diff = diff * full_mask * weights
+                ce = -(policies * log_probs)
+                weighted_ce = ce * full_mask * weights
                 num_valid = full_mask.sum().clamp(min=1.0)
-                loss = weighted_diff.sum() / num_valid
+                loss = weighted_ce.sum() / num_valid
 
             if scaler is not None:
                 scaler.scale(loss).backward()

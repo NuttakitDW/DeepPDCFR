@@ -541,6 +541,17 @@ def build_response(
             strategy=legal_probs,
         ))
 
+    # Compute average frequency per action across all combos
+    num_actions = len(actions_info)
+    if combos_out:
+        freq_sums = [0.0] * num_actions
+        for combo in combos_out:
+            for j, p in enumerate(combo.strategy):
+                freq_sums[j] += p
+        n = len(combos_out)
+        for j in range(num_actions):
+            actions_info[j].frequency = round(freq_sums[j] / n, 4)
+
     # Format board as space-separated
     board_cards = parse_board_cards(req.board)
     board_display = " ".join(board_cards)

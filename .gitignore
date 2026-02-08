@@ -165,3 +165,4 @@ data.csv
 *.pt
 /game-export
 /models/
+/temp
