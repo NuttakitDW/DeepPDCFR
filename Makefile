@@ -2,11 +2,17 @@
 # - cpu (default)
 # - mps   (Apple Metal, if torch.backends.mps.is_available() is True)
 # - cuda  (NVIDIA CUDA build/device required)
-# Example: make train DEVICE=mps
+# Example: make train DEVICE=mps RESUME=true
 DEVICE ?= cpu
+CONFIG ?= configs/NLHEGeneralized.yaml
+RESUME ?= true
+FORCE ?= --force
 
 train:
-	python scripts/run.py with configs/NLHEGeneralized.yaml device=$(DEVICE) --force
+	python scripts/run.py with $(CONFIG) device=$(DEVICE) resume=$(RESUME) $(FORCE)
+
+train_fresh: RESUME=false
+train_fresh: train
 
 serve:
 	uvicorn api.server:app --port 8000
