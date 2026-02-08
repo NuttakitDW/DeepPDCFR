@@ -87,14 +87,28 @@ class ScenarioGenerator:
         pot_range: tuple[int, int] = (3, 60),
         streets: list[str] = None,
         seed: int = 0,
+        fixed_oop_bet_config: Optional[dict] = None,
+        fixed_ip_bet_config: Optional[dict] = None,
     ):
         self.stack_range = stack_range
         self.pot_range = pot_range
         self.streets = streets or ["flop", "turn", "river"]
         self.rng = np.random.RandomState(seed)
 
+        # Parse fixed bet configs if provided
+        self.fixed_oop_bet_config = self._parse_bet_config(fixed_oop_bet_config) if fixed_oop_bet_config else None
+        self.fixed_ip_bet_config = self._parse_bet_config(fixed_ip_bet_config) if fixed_ip_bet_config else None
+
         # Pre-enumerate canonical flop combos (sample on demand)
         self._all_flops = list(self._enumerate_canonical_flops())
+
+    @staticmethod
+    def _parse_bet_config(raw: dict) -> StreetBetConfig:
+        """Parse a raw dict like {"bet": [...], "raise": [...]} into a StreetBetConfig."""
+        return StreetBetConfig(
+            bet=[parse_bet_size(s) for s in raw.get("bet", [])],
+            raise_=[parse_bet_size(s) for s in raw.get("raise", [])],
+        )
 
     def _enumerate_canonical_flops(self):
         """Yield all unique canonical flop combinations."""
@@ -141,19 +155,28 @@ class ScenarioGenerator:
             min(self.pot_range[1], eff_stack) + 1,
         )
 
-        # Random bet sizes: 50% from templates, 50% fully randomized continuous
-        if random.random() < 0.5:
-            # Template-based (existing behavior)
-            bet_template = random.choice([
-                DEFAULT_BET_SIZES_SMALL, DEFAULT_BET_SIZES_MEDIUM, DEFAULT_BET_SIZES_LARGE
-            ])
-            street_config = StreetBetConfig(
-                bet=[parse_bet_size(s) for s in bet_template["bet"]],
-                raise_=[parse_bet_size(s) for s in bet_template["raise"]],
-            )
+        # Bet sizes: use fixed configs if provided, else random
+        if self.fixed_oop_bet_config and self.fixed_ip_bet_config:
+            oop_config = self.fixed_oop_bet_config
+            ip_config = self.fixed_ip_bet_config
+        elif self.fixed_oop_bet_config or self.fixed_ip_bet_config:
+            # One fixed, one random
+            oop_config = self.fixed_oop_bet_config or self._generate_random_bet_config()
+            ip_config = self.fixed_ip_bet_config or self._generate_random_bet_config()
         else:
-            # Fully randomized continuous bet sizes
-            street_config = self._generate_random_bet_config()
+            # Random bet sizes: 50% from templates, 50% fully randomized continuous
+            if random.random() < 0.5:
+                bet_template = random.choice([
+                    DEFAULT_BET_SIZES_SMALL, DEFAULT_BET_SIZES_MEDIUM, DEFAULT_BET_SIZES_LARGE
+                ])
+                street_config = StreetBetConfig(
+                    bet=[parse_bet_size(s) for s in bet_template["bet"]],
+                    raise_=[parse_bet_size(s) for s in bet_template["raise"]],
+                )
+            else:
+                street_config = self._generate_random_bet_config()
+            oop_config = street_config
+            ip_config = street_config
 
         tree_config = TreeConfig(
             effective_stack=eff_stack,
@@ -165,9 +188,9 @@ class ScenarioGenerator:
             merging_threshold=0.1,
             rake_rate=0.0,
             rake_cap=0.0,
-            flop_bet_sizes=[street_config, street_config],
-            turn_bet_sizes=[street_config, street_config],
-            river_bet_sizes=[street_config, street_config],
+            flop_bet_sizes=[oop_config, ip_config],
+            turn_bet_sizes=[oop_config, ip_config],
+            river_bet_sizes=[oop_config, ip_config],
         )
 
         # Random ranges (diverse strategies for range-aware training)
@@ -402,6 +425,8 @@ class PostflopVRDeepPDCFR:
         reinitialize_imm_regret_networks: bool = True,
         stack_range: tuple[int, int] = (20, 200),
         pot_range: tuple[int, int] = (3, 60),
+        fixed_oop_bet_config: Optional[dict] = None,
+        fixed_ip_bet_config: Optional[dict] = None,
         device: str = "cpu",
         seed: int = 0,
         max_time: int = 0,
@@ -443,7 +468,9 @@ class PostflopVRDeepPDCFR:
 
         # Initialize scenario generator
         self.scenario_gen = ScenarioGenerator(
-            stack_range=stack_range, pot_range=pot_range, seed=seed
+            stack_range=stack_range, pot_range=pot_range, seed=seed,
+            fixed_oop_bet_config=fixed_oop_bet_config,
+            fixed_ip_bet_config=fixed_ip_bet_config,
         )
 
         # V2 model kwargs

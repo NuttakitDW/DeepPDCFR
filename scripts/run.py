@@ -20,6 +20,8 @@ def config():
     # Scenario
     stack_range = [20, 200]
     pot_range = [3, 60]
+    fixed_oop_bet_config = None
+    fixed_ip_bet_config = None
 
     # Training
     num_iterations = 0
