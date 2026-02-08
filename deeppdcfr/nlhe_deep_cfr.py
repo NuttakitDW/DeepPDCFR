@@ -634,23 +634,8 @@ class PostflopVRDeepPDCFR:
                     traverser=traverser,
                     scenario=scenario,
                     num_iteration=self.num_iteration,
-                    epsilon=self.epsilon,
-                    alpha=self.alpha,
-                    use_regret_matching_argmax=self.regret_trainers[0].use_regret_matching_argmax,
                     traversal_device=self.traversal_device,
                     seed=self.seed,
-                    # Buffer sizes: make them large enough to avoid local reservoir replacement.
-                    advantage_buffer_size=self.regret_trainers[0].buffer.buffer_size * max(1, workers),
-                    ave_policy_buffer_size=self.ave_policy_trainer.buffer.buffer_size * max(1, workers),
-                    # Model architecture + shared LR doesn't matter for traversal, but ctor needs them.
-                    learning_rate=self.regret_trainers[0].learning_rate,
-                    card_embed_dim=self.regret_trainers[0].model_kwargs["card_embed_dim"],
-                    situation_hidden=self.regret_trainers[0].model_kwargs["situation_hidden"],
-                    combo_hidden=self.regret_trainers[0].model_kwargs["combo_hidden"],
-                    fusion_hidden=self.regret_trainers[0].model_kwargs["fusion_hidden"],
-                    fusion_residual_blocks=self.regret_trainers[0].model_kwargs["fusion_residual_blocks"],
-                    reg_state=reg_state,
-                    imm_state=imm_state,
                 )
             )
 
@@ -659,7 +644,28 @@ class PostflopVRDeepPDCFR:
         self.logger.info(
             f"[it {self.num_iteration}][p{traverser}] mp traverse | workers={workers} device={self.traversal_device}"
         )
-        with ctx.Pool(processes=workers) as pool:
+        # NOTE: With spawn, sending large tensors per-task is extremely slow (and kills parallelism).
+        # Push common state once via the pool initializer.
+        init_args = (
+            reg_state,
+            imm_state,
+            dict(
+                epsilon=self.epsilon,
+                alpha=self.alpha,
+                use_regret_matching_argmax=self.regret_trainers[0].use_regret_matching_argmax,
+                # Buffer sizes: make them large enough to avoid local reservoir replacement.
+                advantage_buffer_size=self.regret_trainers[0].buffer.buffer_size * max(1, workers),
+                ave_policy_buffer_size=self.ave_policy_trainer.buffer.buffer_size * max(1, workers),
+                # Model architecture + LR only needed to construct the models.
+                learning_rate=self.regret_trainers[0].learning_rate,
+                card_embed_dim=self.regret_trainers[0].model_kwargs["card_embed_dim"],
+                situation_hidden=self.regret_trainers[0].model_kwargs["situation_hidden"],
+                combo_hidden=self.regret_trainers[0].model_kwargs["combo_hidden"],
+                fusion_hidden=self.regret_trainers[0].model_kwargs["fusion_hidden"],
+                fusion_residual_blocks=self.regret_trainers[0].model_kwargs["fusion_residual_blocks"],
+            ),
+        )
+        with ctx.Pool(processes=workers, initializer=_mp_worker_init, initargs=init_args) as pool:
             results = pool.map(_mp_collect_traversals, payloads)
 
         # Merge: parent applies the actual reservoir sampling.
@@ -1036,14 +1042,7 @@ class PostflopVRDeepPDCFR:
 
 
 def _mp_collect_traversals(payload: dict) -> dict:
-    # Ensure we don't pay torch.compile overhead in workers.
-    import os
-
-    os.environ["DEEPPDCFR_DISABLE_COMPILE"] = "1"
-    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
-    os.environ.setdefault("MKL_NUM_THREADS", "1")
-    os.environ.setdefault("OMP_NUM_THREADS", "1")
-
+    # Common state is configured by _mp_worker_init.
     wid = int(payload["wid"])
     seed = int(payload["seed"])
     traverser = int(payload["traverser"])
@@ -1060,18 +1059,18 @@ def _mp_collect_traversals(payload: dict) -> dict:
     solver = PostflopVRDeepPDCFR(
         num_iterations=1,
         num_traversals=n_traversals,
-        advantage_buffer_size=int(payload["advantage_buffer_size"]),
-        ave_policy_buffer_size=int(payload["ave_policy_buffer_size"]),
-        learning_rate=float(payload["learning_rate"]),
+        advantage_buffer_size=int(_MP_COMMON["advantage_buffer_size"]),
+        ave_policy_buffer_size=int(_MP_COMMON["ave_policy_buffer_size"]),
+        learning_rate=float(_MP_COMMON["learning_rate"]),
         advantage_network_train_steps=0,
         ave_policy_network_train_steps=0,
         advantage_batch_size=1,
         ave_policy_batch_size=1,
         evaluation_frequency=1,
-        epsilon=float(payload["epsilon"]),
-        alpha=float(payload["alpha"]),
+        epsilon=float(_MP_COMMON["epsilon"]),
+        alpha=float(_MP_COMMON["alpha"]),
         gamma=2.0,
-        use_regret_matching_argmax=bool(payload["use_regret_matching_argmax"]),
+        use_regret_matching_argmax=bool(_MP_COMMON["use_regret_matching_argmax"]),
         reinitialize_advantage_networks=False,
         reinitialize_imm_regret_networks=False,
         stack_range=(20, 200),
@@ -1083,18 +1082,16 @@ def _mp_collect_traversals(payload: dict) -> dict:
         save_dir="",
         resume=False,
         logger=Logger(writer_strings=[]),
-        card_embed_dim=int(payload["card_embed_dim"]),
-        situation_hidden=int(payload["situation_hidden"]),
-        combo_hidden=int(payload["combo_hidden"]),
-        fusion_hidden=int(payload["fusion_hidden"]),
-        fusion_residual_blocks=int(payload["fusion_residual_blocks"]),
+        card_embed_dim=int(_MP_COMMON["card_embed_dim"]),
+        situation_hidden=int(_MP_COMMON["situation_hidden"]),
+        combo_hidden=int(_MP_COMMON["combo_hidden"]),
+        fusion_hidden=int(_MP_COMMON["fusion_hidden"]),
+        fusion_residual_blocks=int(_MP_COMMON["fusion_residual_blocks"]),
     )
 
-    reg_state = payload["reg_state"]
-    imm_state = payload["imm_state"]
     for p in range(2):
-        solver.regret_trainers[p].model.load_state_dict(reg_state[p], strict=True)
-        solver.regret_trainers[p].imm_model.load_state_dict(imm_state[p], strict=True)
+        solver.regret_trainers[p].model.load_state_dict(_MP_REG_STATE[p], strict=True)
+        solver.regret_trainers[p].imm_model.load_state_dict(_MP_IMM_STATE[p], strict=True)
 
     game = NLHEGame(scenario.tree_config, scenario.card_config)
     encoder = FastFeatureEncoder(game)
@@ -1110,3 +1107,23 @@ def _mp_collect_traversals(payload: dict) -> dict:
         regret_nodes=solver.regret_trainers[traverser].buffer.nodes,
         policy_nodes=solver.ave_policy_trainer.buffer.nodes,
     )
+
+
+_MP_REG_STATE = None
+_MP_IMM_STATE = None
+_MP_COMMON = None
+
+
+def _mp_worker_init(reg_state, imm_state, common: dict):
+    # Ensure we don't pay torch.compile overhead in workers.
+    import os
+
+    os.environ["DEEPPDCFR_DISABLE_COMPILE"] = "1"
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+    global _MP_REG_STATE, _MP_IMM_STATE, _MP_COMMON
+    _MP_REG_STATE = reg_state
+    _MP_IMM_STATE = imm_state
+    _MP_COMMON = common
