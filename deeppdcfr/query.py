@@ -82,6 +82,8 @@ class SolverQuery:
                 f"Train a model first or check the path."
             )
         state_dict = torch.load(path, map_location=device, weights_only=True)
+        # Strip _orig_mod. prefix added by torch.compile()
+        state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
         self.model.load_state_dict(state_dict)
         self.model.eval()
 
