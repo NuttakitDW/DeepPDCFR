@@ -549,7 +549,8 @@ class BulkRegretTrainer:
             return 0.0
 
         scaler = self._scaler
-        last_loss = 0.0
+        last_loss = None
+        log_every = 1
         for step in range(self.train_steps):
             (board_ids, sit_numerical, combo_card_ids, hand_features,
              cf_regrets, action_masks, combo_masks, _iterations) = self.buffer.sample(self.batch_size)
@@ -599,15 +600,15 @@ class BulkRegretTrainer:
                 imm_loss.backward()
                 self.imm_optimizer.step()
 
-            last_loss = loss.item()
-            if logger and (step % 1 == 0 or step == self.train_steps - 1):
+            last_loss = loss.detach()
+            if logger and (step % log_every == 0 or step == self.train_steps - 1):
                 logger.info(
-                    f"[{step}/{self.train_steps}] regret loss: {loss.item():.6f}, "
-                    f"imm: {imm_loss.item():.6f}"
+                    f"[{step}/{self.train_steps}] regret loss: {loss.detach().item():.6f}, "
+                    f"imm: {imm_loss.detach().item():.6f}"
                 )
 
         self.target_model.load_state_dict(self.model.state_dict())
-        return last_loss
+        return float(last_loss.detach().item()) if last_loss is not None else 0.0
 
     def get_policy(
         self,
@@ -766,7 +767,7 @@ class BulkPolicyTrainer:
                 self.optimizer.step()
 
             last_loss = loss.item()
-            if logger and (step % 50 == 0 or step == self.train_steps - 1):
+            if logger and (step % 1 == 0 or step == self.train_steps - 1):
                 logger.info(f"[{step}/{self.train_steps}] policy loss: {loss.item():.6f}")
 
         return last_loss
