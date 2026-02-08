@@ -12,7 +12,9 @@ and BulkPolicyTrainer for VR-PDCFR+ training.
 from __future__ import annotations
 
 import math
+import os
 import random
+import time
 from typing import Optional
 
 import logging
@@ -43,6 +45,8 @@ def _try_compile(model: nn.Module, device: str = "cpu") -> nn.Module:
     Only compiles on CUDA — the inductor backend has limited CPU/macOS support
     and the compile overhead isn't worthwhile for CPU anyway.
     """
+    if os.environ.get("DEEPPDCFR_DISABLE_COMPILE") == "1":
+        return model
     if _HAS_COMPILE and "cuda" in device and torch.cuda.is_available():
         try:
             return torch.compile(model)
@@ -549,10 +553,16 @@ class BulkRegretTrainer:
             return 0.0
 
         scaler = self._scaler
-        last_loss = 0.0
+        last_loss = None
+        log_every = 1
+        last_log_t = time.perf_counter()
         for step in range(self.train_steps):
             (board_ids, sit_numerical, combo_card_ids, hand_features,
              cf_regrets, action_masks, combo_masks, _iterations) = self.buffer.sample(self.batch_size)
+            if logger and step == 0:
+                logger.info(
+                    f"[reg] batch_size={self.batch_size}, sampled_B={board_ids.shape[0]}, buffer_len={len(self.buffer)}"
+                )
 
             board_mask = (board_ids != 52).float()
 
@@ -599,15 +609,18 @@ class BulkRegretTrainer:
                 imm_loss.backward()
                 self.imm_optimizer.step()
 
-            last_loss = loss.item()
-            if logger and step % 100 == 0:
+            last_loss = loss.detach()
+            if logger and (step % log_every == 0 or step == self.train_steps - 1):
+                now = time.perf_counter()
+                dt_ms = (now - last_log_t) * 1000.0
+                last_log_t = now
                 logger.info(
-                    f"[{step}/{self.train_steps}] regret loss: {loss.item():.6f}, "
-                    f"imm: {imm_loss.item():.6f}"
+                    f"[{step}/{self.train_steps}] regret loss: {loss.detach().item():.6f}, "
+                    f"imm: {imm_loss.detach().item():.6f}, dt_ms: {dt_ms:.1f}"
                 )
 
         self.target_model.load_state_dict(self.model.state_dict())
-        return last_loss
+        return float(last_loss.detach().item()) if last_loss is not None else 0.0
 
     def get_policy(
         self,
@@ -731,10 +744,16 @@ class BulkPolicyTrainer:
             return 0.0
 
         scaler = self._scaler
-        last_loss = 0.0
+        last_loss = None
+        log_every = 1
+        last_log_t = time.perf_counter()
         for step in range(self.train_steps):
             (board_ids, sit_numerical, combo_card_ids, hand_features,
              policies, action_masks, combo_masks, iterations) = self.buffer.sample(self.batch_size)
+            if logger and step == 0:
+                logger.info(
+                    f"[pol] batch_size={self.batch_size}, sampled_B={board_ids.shape[0]}, buffer_len={len(self.buffer)}"
+                )
 
             board_mask = (board_ids != 52).float()
 
@@ -772,11 +791,16 @@ class BulkPolicyTrainer:
                 loss.backward()
                 self.optimizer.step()
 
-            last_loss = loss.item()
-            if logger and step % 100 == 0:
-                logger.info(f"[{step}/{self.train_steps}] policy loss: {loss.item():.6f}")
+            last_loss = loss.detach()
+            if logger and (step % log_every == 0 or step == self.train_steps - 1):
+                now = time.perf_counter()
+                dt_ms = (now - last_log_t) * 1000.0
+                last_log_t = now
+                logger.info(
+                    f"[{step}/{self.train_steps}] policy loss: {loss.detach().item():.6f}, dt_ms: {dt_ms:.1f}"
+                )
 
-        return last_loss
+        return float(last_loss.detach().item()) if last_loss is not None else 0.0
 
     def get_policy(
         self,

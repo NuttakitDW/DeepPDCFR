@@ -57,6 +57,10 @@ def config():
     max_time = 0
     save_interval = 600
     resume = False
+    traversal_workers = 1
+    traversal_device = None  # default: same as `device`
+    traversal_mp_context = "spawn"
+    traversal_chunk_size = 0  # 0 = auto
 
     # logger
     writer_strings = ["stdout"]
@@ -67,7 +71,7 @@ def config():
         ex.observers.append(ServerFileStorageObserver(folder))
 
 
-@ex.automain
+@ex.main
 def main(algo_name, _config, _run):
     configs = dict(_config)
     if configs["save_log"]:
@@ -77,3 +81,8 @@ def main(algo_name, _config, _run):
 
     solver = init_object(solver_class, configs, logger=logger)
     solver.solve()
+
+
+if __name__ == "__main__":
+    # Needed for multiprocessing (spawn) safety; Sacred's @ex.automain would run on import.
+    ex.run_commandline()

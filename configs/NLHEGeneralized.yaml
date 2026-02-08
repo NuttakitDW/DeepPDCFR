@@ -41,3 +41,7 @@ max_time: 0
 save_interval: 600  # save checkpoint every 10 minutes
 resume: True  # resume from latest checkpoint if available
 seed: 0
+traversal_workers: 1
+traversal_device: null
+traversal_mp_context: spawn
+traversal_chunk_size: 0

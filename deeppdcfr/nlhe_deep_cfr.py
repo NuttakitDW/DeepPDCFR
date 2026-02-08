@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+import multiprocessing as mp
 
 import numpy as np
 import torch
@@ -407,6 +408,10 @@ class PostflopVRDeepPDCFR:
         save_interval: int = 600,
         save_dir: str = "models/NLHEGeneralized",
         resume: bool = False,
+        traversal_workers: int = 1,
+        traversal_device: Optional[str] = None,
+        traversal_mp_context: str = "spawn",
+        traversal_chunk_size: int = 0,
         logger: Optional[Logger] = None,
         # V2 model architecture params
         card_embed_dim: int = 64,
@@ -429,6 +434,12 @@ class PostflopVRDeepPDCFR:
         self.logger = logger or Logger(writer_strings=[])
 
         set_seed(seed)
+        self.seed = seed
+
+        self.traversal_workers = max(1, int(traversal_workers))
+        self.traversal_device = traversal_device or device
+        self.traversal_mp_context = traversal_mp_context
+        self.traversal_chunk_size = max(0, int(traversal_chunk_size))
 
         # Initialize scenario generator
         self.scenario_gen = ScenarioGenerator(
@@ -479,6 +490,15 @@ class PostflopVRDeepPDCFR:
         if resume:
             self._load_checkpoint()
 
+    def _mp_ctx(self):
+        try:
+            return mp.get_context(self.traversal_mp_context)
+        except ValueError:
+            self.logger.info(
+                f"Invalid traversal_mp_context={self.traversal_mp_context!r}; falling back to 'spawn'."
+            )
+            return mp.get_context("spawn")
+
     def solve(self):
         """Main training loop."""
         self.start_time = time.time()
@@ -528,12 +548,26 @@ class PostflopVRDeepPDCFR:
     ):
         """Run vectorized traversals to collect regret data for all combos."""
         opp = 1 - traverser
+        self.logger.info(
+            f"[it {self.num_iteration}][p{traverser}] traverse start | n={self.num_traversals}"
+        )
+        nodes_before = self.nodes_touched
+        episode_before = self.episode
+
+        # If using multiprocessing, shard traversals across workers and merge buffers back.
+        if self.traversal_workers > 1:
+            self._collect_training_data_mp(scenario, traverser)
+            self.logger.info(
+                f"[it {self.num_iteration}][p{traverser}] traverse done | +ep={self.episode - episode_before} | +nodes={self.nodes_touched - nodes_before}"
+            )
+            return
 
         # Pre-encode combos for both players (shared across traversals on same board)
         trav_combos = game.valid_combos(traverser)
         opp_combos = game.valid_combos(opp)
+        progress_interval = max(1, self.num_traversals // 4)
 
-        for _ in range(self.num_traversals):
+        for tid in range(1, self.num_traversals + 1):
             self.episode += 1
             root = game.new_initial_state()
 
@@ -557,6 +591,128 @@ class PostflopVRDeepPDCFR:
                 root, traverser, encoder, game,
                 trav_combos, opp_combos, opp_reach,
             )
+            if tid % progress_interval == 0 or tid == self.num_traversals:
+                self.logger.info(
+                    f"[it {self.num_iteration}][p{traverser}] traverse {tid}/{self.num_traversals}"
+                )
+        self.logger.info(
+            f"[it {self.num_iteration}][p{traverser}] traverse done | +ep={self.episode - episode_before} | +nodes={self.nodes_touched - nodes_before}"
+        )
+
+    def _collect_training_data_mp(self, scenario: Scenario, traverser: int):
+        def _cpu_state_dict(m: torch.nn.Module) -> dict:
+            # torch.compile wraps modules in an OptimizedModule that prefixes keys with "_orig_mod.".
+            # Workers disable compile, so we always serialize the original module's keys.
+            orig = getattr(m, "_orig_mod", None)
+            sd = (orig.state_dict() if orig is not None else m.state_dict())
+            # Defensive: if someone passed in a prefixed dict, strip it.
+            if sd and all(k.startswith("_orig_mod.") for k in sd.keys()):
+                sd = {k[len("_orig_mod."):]: v for k, v in sd.items()}
+            return {k: v.detach().cpu() for k, v in sd.items()}
+
+        # Snapshot model weights once per traversal phase.
+        reg_state = []
+        imm_state = []
+        for p in range(2):
+            reg_state.append(_cpu_state_dict(self.regret_trainers[p].model))
+            imm_state.append(_cpu_state_dict(self.regret_trainers[p].imm_model))
+
+        # Split traversals into chunks so we can stream progress while workers run.
+        workers = self.traversal_workers
+        n = int(self.num_traversals)
+        chunk = self.traversal_chunk_size if self.traversal_chunk_size > 0 else max(1, n // max(1, workers * 4))
+
+        # Worker payload keeps config minimal; workers build their own game/encoder.
+        payloads = []
+        remaining = n
+        task_id = 0
+        while remaining > 0:
+            w_n = min(chunk, remaining)
+            wid = task_id % workers
+            payloads.append(
+                dict(
+                    task_id=task_id,
+                    wid=wid,
+                    n_traversals=w_n,
+                    traverser=traverser,
+                    scenario=scenario,
+                    num_iteration=self.num_iteration,
+                    traversal_device=self.traversal_device,
+                    seed=self.seed,
+                )
+            )
+            remaining -= w_n
+            task_id += 1
+
+        t0 = time.perf_counter()
+        ctx = self._mp_ctx()
+        self.logger.info(
+            f"[it {self.num_iteration}][p{traverser}] mp traverse | workers={workers} device={self.traversal_device} chunks={len(payloads)} chunk_size={chunk}"
+        )
+        # NOTE: With spawn, sending large tensors per-task is extremely slow (and kills parallelism).
+        # Push common state once via the pool initializer.
+        init_args = (
+            reg_state,
+            imm_state,
+            dict(
+                epsilon=self.epsilon,
+                alpha=self.alpha,
+                use_regret_matching_argmax=self.regret_trainers[0].use_regret_matching_argmax,
+                # Buffer sizes: make them large enough to avoid local reservoir replacement.
+                advantage_buffer_size=self.regret_trainers[0].buffer.buffer_size * max(1, workers),
+                ave_policy_buffer_size=self.ave_policy_trainer.buffer.buffer_size * max(1, workers),
+                # Model architecture + LR only needed to construct the models.
+                learning_rate=self.regret_trainers[0].learning_rate,
+                card_embed_dim=self.regret_trainers[0].model_kwargs["card_embed_dim"],
+                situation_hidden=self.regret_trainers[0].model_kwargs["situation_hidden"],
+                combo_hidden=self.regret_trainers[0].model_kwargs["combo_hidden"],
+                fusion_hidden=self.regret_trainers[0].model_kwargs["fusion_hidden"],
+                fusion_residual_blocks=self.regret_trainers[0].model_kwargs["fusion_residual_blocks"],
+            ),
+        )
+        total_nodes = 0
+        total_ep = 0
+        done_tasks = 0
+        total_tasks = len(payloads)
+        progress_interval = max(1, total_tasks // 8)
+        with ctx.Pool(processes=workers, initializer=_mp_worker_init, initargs=init_args) as pool:
+            for r in pool.imap_unordered(_mp_collect_traversals, payloads):
+                total_ep += r["episodes"]
+                self.nodes_touched += r["nodes_touched"]
+                total_nodes += r["nodes_touched"]
+
+                for node in r["regret_nodes"]:
+                    self.regret_trainers[traverser].add_node_data(
+                        node["board_ids"],
+                        node["sit_numerical"],
+                        node["combo_card_ids"],
+                        node["hand_features"],
+                        node["values"],
+                        node["action_mask"],
+                        node["iteration"],
+                    )
+                for node in r["policy_nodes"]:
+                    self.ave_policy_trainer.add_node_data(
+                        node["board_ids"],
+                        node["sit_numerical"],
+                        node["combo_card_ids"],
+                        node["hand_features"],
+                        node["values"],
+                        node["action_mask"],
+                        node["iteration"],
+                    )
+
+                done_tasks += 1
+                if done_tasks % progress_interval == 0 or done_tasks == total_tasks:
+                    self.logger.info(
+                        f"[it {self.num_iteration}][p{traverser}] mp traverse progress | tasks={done_tasks}/{total_tasks} ep={total_ep}/{n}"
+                    )
+
+        self.episode += total_ep
+        dt = (time.perf_counter() - t0) * 1000.0
+        self.logger.info(
+            f"[it {self.num_iteration}][p{traverser}] mp merge done | +ep={total_ep} | workers={workers} | dt_ms={dt:.1f}"
+        )
 
     def vectorized_dfs(
         self,
@@ -894,3 +1050,92 @@ class PostflopVRDeepPDCFR:
 
     def _get_scenario(self) -> Scenario:
         return self.scenario_gen.sample()
+
+
+def _mp_collect_traversals(payload: dict) -> dict:
+    # Common state is configured by _mp_worker_init.
+    task_id = int(payload["task_id"])
+    wid = int(payload["wid"])
+    seed = int(payload["seed"])
+    traverser = int(payload["traverser"])
+    n_traversals = int(payload["n_traversals"])
+    scenario = payload["scenario"]
+    num_iteration = int(payload["num_iteration"])
+    device = payload["traversal_device"]
+
+    # Per-worker deterministic seed (best-effort; scheduling still affects reservoir replacement order).
+    worker_seed = seed + 10_000_000 * (wid + 1) + 1000 * num_iteration + 10 * traverser + task_id
+    set_seed(worker_seed)
+
+    # Build a local solver instance for traversal-only, load snapshot weights.
+    solver = PostflopVRDeepPDCFR(
+        num_iterations=1,
+        num_traversals=n_traversals,
+        advantage_buffer_size=int(_MP_COMMON["advantage_buffer_size"]),
+        ave_policy_buffer_size=int(_MP_COMMON["ave_policy_buffer_size"]),
+        learning_rate=float(_MP_COMMON["learning_rate"]),
+        advantage_network_train_steps=0,
+        ave_policy_network_train_steps=0,
+        advantage_batch_size=1,
+        ave_policy_batch_size=1,
+        evaluation_frequency=1,
+        epsilon=float(_MP_COMMON["epsilon"]),
+        alpha=float(_MP_COMMON["alpha"]),
+        gamma=2.0,
+        use_regret_matching_argmax=bool(_MP_COMMON["use_regret_matching_argmax"]),
+        reinitialize_advantage_networks=False,
+        reinitialize_imm_regret_networks=False,
+        stack_range=(20, 200),
+        pot_range=(3, 60),
+        device=device,
+        seed=worker_seed,
+        max_time=0,
+        save_interval=0,
+        save_dir="",
+        resume=False,
+        logger=Logger(writer_strings=[]),
+        card_embed_dim=int(_MP_COMMON["card_embed_dim"]),
+        situation_hidden=int(_MP_COMMON["situation_hidden"]),
+        combo_hidden=int(_MP_COMMON["combo_hidden"]),
+        fusion_hidden=int(_MP_COMMON["fusion_hidden"]),
+        fusion_residual_blocks=int(_MP_COMMON["fusion_residual_blocks"]),
+    )
+
+    for p in range(2):
+        solver.regret_trainers[p].model.load_state_dict(_MP_REG_STATE[p], strict=True)
+        solver.regret_trainers[p].imm_model.load_state_dict(_MP_IMM_STATE[p], strict=True)
+
+    game = NLHEGame(scenario.tree_config, scenario.card_config)
+    encoder = FastFeatureEncoder(game)
+
+    nodes_before = solver.nodes_touched
+    ep_before = solver.episode
+    solver.num_iteration = num_iteration
+    solver.collect_training_data(game, encoder, scenario, traverser)
+
+    return dict(
+        episodes=solver.episode - ep_before,
+        nodes_touched=solver.nodes_touched - nodes_before,
+        regret_nodes=solver.regret_trainers[traverser].buffer.nodes,
+        policy_nodes=solver.ave_policy_trainer.buffer.nodes,
+    )
+
+
+_MP_REG_STATE = None
+_MP_IMM_STATE = None
+_MP_COMMON = None
+
+
+def _mp_worker_init(reg_state, imm_state, common: dict):
+    # Ensure we don't pay torch.compile overhead in workers.
+    import os
+
+    os.environ["DEEPPDCFR_DISABLE_COMPILE"] = "1"
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+    global _MP_REG_STATE, _MP_IMM_STATE, _MP_COMMON
+    _MP_REG_STATE = reg_state
+    _MP_IMM_STATE = imm_state
+    _MP_COMMON = common
