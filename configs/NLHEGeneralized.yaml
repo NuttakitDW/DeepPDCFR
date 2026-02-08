@@ -6,14 +6,14 @@ pot_range: [3, 60]
 
 # Training (external sampling — fewer traversals, each processes ALL combos)
 num_iterations: 0  # 0 = run forever (stop manually or via max_time)
-num_traversals: 1000
+num_traversals: 5000
 evaluation_frequency: 3
 epsilon: 0.6
 
 # Regret networks (node-level buffer)
 advantage_buffer_size: 10000
 advantage_batch_size: 1024
-advantage_network_train_steps: 500
+advantage_network_train_steps: 300
 reinitialize_advantage_networks: False
 reinitialize_imm_regret_networks: True
 use_regret_matching_argmax: True
