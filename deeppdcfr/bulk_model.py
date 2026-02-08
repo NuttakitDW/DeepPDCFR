@@ -12,6 +12,7 @@ and BulkPolicyTrainer for VR-PDCFR+ training.
 from __future__ import annotations
 
 import math
+import os
 import random
 import time
 from typing import Optional
@@ -44,6 +45,8 @@ def _try_compile(model: nn.Module, device: str = "cpu") -> nn.Module:
     Only compiles on CUDA — the inductor backend has limited CPU/macOS support
     and the compile overhead isn't worthwhile for CPU anyway.
     """
+    if os.environ.get("DEEPPDCFR_DISABLE_COMPILE") == "1":
+        return model
     if _HAS_COMPILE and "cuda" in device and torch.cuda.is_available():
         try:
             return torch.compile(model)

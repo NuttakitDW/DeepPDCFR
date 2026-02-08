@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+import multiprocessing as mp
 
 import numpy as np
 import torch
@@ -407,6 +408,9 @@ class PostflopVRDeepPDCFR:
         save_interval: int = 600,
         save_dir: str = "models/NLHEGeneralized",
         resume: bool = False,
+        traversal_workers: int = 1,
+        traversal_device: Optional[str] = None,
+        traversal_mp_context: str = "spawn",
         logger: Optional[Logger] = None,
         # V2 model architecture params
         card_embed_dim: int = 64,
@@ -429,6 +433,11 @@ class PostflopVRDeepPDCFR:
         self.logger = logger or Logger(writer_strings=[])
 
         set_seed(seed)
+        self.seed = seed
+
+        self.traversal_workers = max(1, int(traversal_workers))
+        self.traversal_device = traversal_device or device
+        self.traversal_mp_context = traversal_mp_context
 
         # Initialize scenario generator
         self.scenario_gen = ScenarioGenerator(
@@ -478,6 +487,15 @@ class PostflopVRDeepPDCFR:
         # Resume from checkpoint
         if resume:
             self._load_checkpoint()
+
+    def _mp_ctx(self):
+        try:
+            return mp.get_context(self.traversal_mp_context)
+        except ValueError:
+            self.logger.info(
+                f"Invalid traversal_mp_context={self.traversal_mp_context!r}; falling back to 'spawn'."
+            )
+            return mp.get_context("spawn")
 
     def solve(self):
         """Main training loop."""
@@ -534,6 +552,14 @@ class PostflopVRDeepPDCFR:
         nodes_before = self.nodes_touched
         episode_before = self.episode
 
+        # If using multiprocessing, shard traversals across workers and merge buffers back.
+        if self.traversal_workers > 1:
+            self._collect_training_data_mp(scenario, traverser)
+            self.logger.info(
+                f"[it {self.num_iteration}][p{traverser}] traverse done | +ep={self.episode - episode_before} | +nodes={self.nodes_touched - nodes_before}"
+            )
+            return
+
         # Pre-encode combos for both players (shared across traversals on same board)
         trav_combos = game.valid_combos(traverser)
         opp_combos = game.valid_combos(opp)
@@ -569,6 +595,96 @@ class PostflopVRDeepPDCFR:
                 )
         self.logger.info(
             f"[it {self.num_iteration}][p{traverser}] traverse done | +ep={self.episode - episode_before} | +nodes={self.nodes_touched - nodes_before}"
+        )
+
+    def _collect_training_data_mp(self, scenario: Scenario, traverser: int):
+        # Snapshot model weights once per traversal phase.
+        reg_state = []
+        imm_state = []
+        for p in range(2):
+            reg_state.append({k: v.detach().cpu() for k, v in self.regret_trainers[p].model.state_dict().items()})
+            imm_state.append({k: v.detach().cpu() for k, v in self.regret_trainers[p].imm_model.state_dict().items()})
+
+        # Split traversals across workers.
+        workers = self.traversal_workers
+        n = int(self.num_traversals)
+        counts = [n // workers] * workers
+        for i in range(n % workers):
+            counts[i] += 1
+
+        # Worker payload keeps config minimal; workers build their own game/encoder.
+        payloads = []
+        for wid, w_n in enumerate(counts):
+            if w_n <= 0:
+                continue
+            payloads.append(
+                dict(
+                    wid=wid,
+                    n_traversals=w_n,
+                    traverser=traverser,
+                    scenario=scenario,
+                    num_iteration=self.num_iteration,
+                    epsilon=self.epsilon,
+                    alpha=self.alpha,
+                    use_regret_matching_argmax=self.regret_trainers[0].use_regret_matching_argmax,
+                    traversal_device=self.traversal_device,
+                    seed=self.seed,
+                    # Buffer sizes: make them large enough to avoid local reservoir replacement.
+                    advantage_buffer_size=self.regret_trainers[0].buffer.buffer_size * max(1, workers),
+                    ave_policy_buffer_size=self.ave_policy_trainer.buffer.buffer_size * max(1, workers),
+                    # Model architecture + shared LR doesn't matter for traversal, but ctor needs them.
+                    learning_rate=self.regret_trainers[0].learning_rate,
+                    card_embed_dim=self.regret_trainers[0].model_kwargs["card_embed_dim"],
+                    situation_hidden=self.regret_trainers[0].model_kwargs["situation_hidden"],
+                    combo_hidden=self.regret_trainers[0].model_kwargs["combo_hidden"],
+                    fusion_hidden=self.regret_trainers[0].model_kwargs["fusion_hidden"],
+                    fusion_residual_blocks=self.regret_trainers[0].model_kwargs["fusion_residual_blocks"],
+                    reg_state=reg_state,
+                    imm_state=imm_state,
+                )
+            )
+
+        t0 = time.perf_counter()
+        ctx = self._mp_ctx()
+        self.logger.info(
+            f"[it {self.num_iteration}][p{traverser}] mp traverse | workers={workers} device={self.traversal_device}"
+        )
+        with ctx.Pool(processes=workers) as pool:
+            results = pool.map(_mp_collect_traversals, payloads)
+
+        # Merge: parent applies the actual reservoir sampling.
+        total_nodes = 0
+        total_ep = 0
+        for r in results:
+            total_ep += r["episodes"]
+            self.nodes_touched += r["nodes_touched"]
+            total_nodes += r["nodes_touched"]
+
+            for node in r["regret_nodes"]:
+                self.regret_trainers[traverser].add_node_data(
+                    node["board_ids"],
+                    node["sit_numerical"],
+                    node["combo_card_ids"],
+                    node["hand_features"],
+                    node["values"],
+                    node["action_mask"],
+                    node["iteration"],
+                )
+            for node in r["policy_nodes"]:
+                self.ave_policy_trainer.add_node_data(
+                    node["board_ids"],
+                    node["sit_numerical"],
+                    node["combo_card_ids"],
+                    node["hand_features"],
+                    node["values"],
+                    node["action_mask"],
+                    node["iteration"],
+                )
+
+        self.episode += total_ep
+        dt = (time.perf_counter() - t0) * 1000.0
+        self.logger.info(
+            f"[it {self.num_iteration}][p{traverser}] mp merge done | +ep={total_ep} | workers={workers} | dt_ms={dt:.1f}"
         )
 
     def vectorized_dfs(
@@ -907,3 +1023,80 @@ class PostflopVRDeepPDCFR:
 
     def _get_scenario(self) -> Scenario:
         return self.scenario_gen.sample()
+
+
+def _mp_collect_traversals(payload: dict) -> dict:
+    # Ensure we don't pay torch.compile overhead in workers.
+    import os
+
+    os.environ["DEEPPDCFR_DISABLE_COMPILE"] = "1"
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+    wid = int(payload["wid"])
+    seed = int(payload["seed"])
+    traverser = int(payload["traverser"])
+    n_traversals = int(payload["n_traversals"])
+    scenario = payload["scenario"]
+    num_iteration = int(payload["num_iteration"])
+    device = payload["traversal_device"]
+
+    # Per-worker deterministic seed (best-effort; scheduling still affects reservoir replacement order).
+    worker_seed = seed + 10_000_000 * (wid + 1) + 1000 * num_iteration + 10 * traverser
+    set_seed(worker_seed)
+
+    # Build a local solver instance for traversal-only, load snapshot weights.
+    solver = PostflopVRDeepPDCFR(
+        num_iterations=1,
+        num_traversals=n_traversals,
+        advantage_buffer_size=int(payload["advantage_buffer_size"]),
+        ave_policy_buffer_size=int(payload["ave_policy_buffer_size"]),
+        learning_rate=float(payload["learning_rate"]),
+        advantage_network_train_steps=0,
+        ave_policy_network_train_steps=0,
+        advantage_batch_size=1,
+        ave_policy_batch_size=1,
+        evaluation_frequency=1,
+        epsilon=float(payload["epsilon"]),
+        alpha=float(payload["alpha"]),
+        gamma=2.0,
+        use_regret_matching_argmax=bool(payload["use_regret_matching_argmax"]),
+        reinitialize_advantage_networks=False,
+        reinitialize_imm_regret_networks=False,
+        stack_range=(20, 200),
+        pot_range=(3, 60),
+        device=device,
+        seed=worker_seed,
+        max_time=0,
+        save_interval=0,
+        save_dir="",
+        resume=False,
+        logger=Logger(writer_strings=[]),
+        card_embed_dim=int(payload["card_embed_dim"]),
+        situation_hidden=int(payload["situation_hidden"]),
+        combo_hidden=int(payload["combo_hidden"]),
+        fusion_hidden=int(payload["fusion_hidden"]),
+        fusion_residual_blocks=int(payload["fusion_residual_blocks"]),
+    )
+
+    reg_state = payload["reg_state"]
+    imm_state = payload["imm_state"]
+    for p in range(2):
+        solver.regret_trainers[p].model.load_state_dict(reg_state[p], strict=True)
+        solver.regret_trainers[p].imm_model.load_state_dict(imm_state[p], strict=True)
+
+    game = NLHEGame(scenario.tree_config, scenario.card_config)
+    encoder = FastFeatureEncoder(game)
+
+    nodes_before = solver.nodes_touched
+    ep_before = solver.episode
+    solver.num_iteration = num_iteration
+    solver.collect_training_data(game, encoder, scenario, traverser)
+
+    return dict(
+        episodes=solver.episode - ep_before,
+        nodes_touched=solver.nodes_touched - nodes_before,
+        regret_nodes=solver.regret_trainers[traverser].buffer.nodes,
+        policy_nodes=solver.ave_policy_trainer.buffer.nodes,
+    )
