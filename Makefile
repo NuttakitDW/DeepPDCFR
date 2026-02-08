@@ -8,8 +8,21 @@ CONFIG ?= configs/NLHEGeneralized.yaml
 RESUME ?= true
 FORCE ?= --force
 
+# Common overrides (match defaults in configs/NLHEGeneralized.yaml).
+# Example: make train DEVICE=cuda ADV_BS=2048 POL_BS=2048 TRAVERSALS=300
+ADV_BS ?= 512
+POL_BS ?= 512
+ADV_STEPS ?= 500
+POL_STEPS ?= 2000
+TRAVERSALS ?= 500
+EVAL_FREQ ?= 3
+
 train:
-	python scripts/run.py with $(CONFIG) device=$(DEVICE) resume=$(RESUME) $(FORCE)
+	python scripts/run.py with $(CONFIG) device=$(DEVICE) resume=$(RESUME) \
+	advantage_batch_size=$(ADV_BS) ave_policy_batch_size=$(POL_BS) \
+	advantage_network_train_steps=$(ADV_STEPS) ave_policy_network_train_steps=$(POL_STEPS) \
+	num_traversals=$(TRAVERSALS) evaluation_frequency=$(EVAL_FREQ) \
+	$(FORCE)
 
 train_fresh: RESUME=false
 train_fresh: train
