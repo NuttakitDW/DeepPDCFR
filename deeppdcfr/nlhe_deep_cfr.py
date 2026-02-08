@@ -406,6 +406,7 @@ class PostflopVRDeepPDCFR:
         max_time: int = 0,
         save_interval: int = 600,
         save_dir: str = "models/NLHEGeneralized",
+        resume: bool = False,
         logger: Optional[Logger] = None,
         # V2 model architecture params
         card_embed_dim: int = 64,
@@ -473,6 +474,10 @@ class PostflopVRDeepPDCFR:
         self.num_iteration = 0
         self.nodes_touched = 0
         self.episode = 0
+
+        # Resume from checkpoint
+        if resume:
+            self._load_checkpoint()
 
     def solve(self):
         """Main training loop."""
@@ -813,6 +818,56 @@ class PostflopVRDeepPDCFR:
         self.logger.record("iteration", self.num_iteration)
         self.logger.record("episode", self.episode)
         self.logger.dump(step=self.episode)
+
+    def _load_checkpoint(self):
+        """Load model weights from save_dir to resume training."""
+        save_dir = self.save_dir
+        if not save_dir.exists():
+            self.logger.info(f"No checkpoint directory found at {save_dir}. Starting fresh.")
+            return
+
+        # Find best checkpoint: prefer final models, fall back to latest checkpoint
+        loaded = 0
+        for i in range(2):
+            regret_path = save_dir / f"regret_player_{i}.pt"
+            imm_path = save_dir / f"imm_regret_player_{i}.pt"
+
+            # Fall back to latest checkpoint file if final model not found
+            if not regret_path.exists():
+                candidates = sorted(save_dir.glob(f"regret_player_{i}_checkpoint_*.pt"))
+                regret_path = candidates[-1] if candidates else None
+            if not imm_path.exists():
+                candidates = sorted(save_dir.glob(f"imm_regret_player_{i}_checkpoint_*.pt"))
+                imm_path = candidates[-1] if candidates else None
+
+            if regret_path and regret_path.exists():
+                self.regret_trainers[i].model.load_state_dict(
+                    torch.load(regret_path, map_location=self.device, weights_only=True)
+                )
+                loaded += 1
+                self.logger.info(f"Loaded regret model player {i} from {regret_path.name}")
+            if imm_path and imm_path.exists():
+                self.regret_trainers[i].imm_model.load_state_dict(
+                    torch.load(imm_path, map_location=self.device, weights_only=True)
+                )
+                loaded += 1
+                self.logger.info(f"Loaded imm regret model player {i} from {imm_path.name}")
+
+        policy_path = save_dir / "ave_policy.pt"
+        if not policy_path.exists():
+            candidates = sorted(save_dir.glob("ave_policy_checkpoint_*.pt"))
+            policy_path = candidates[-1] if candidates else None
+        if policy_path and policy_path.exists():
+            self.ave_policy_trainer.model.load_state_dict(
+                torch.load(policy_path, map_location=self.device, weights_only=True)
+            )
+            loaded += 1
+            self.logger.info(f"Loaded policy model from {policy_path.name}")
+
+        if loaded > 0:
+            self.logger.info(f"Resumed training: loaded {loaded} model(s) from {save_dir.absolute()}")
+        else:
+            self.logger.info("No checkpoint files found. Starting fresh.")
 
     def save_models(self, checkpoint: bool = False):
         save_dir = self.save_dir

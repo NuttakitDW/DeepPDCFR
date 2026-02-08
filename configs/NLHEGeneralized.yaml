@@ -39,4 +39,5 @@ fusion_residual_blocks: 2
 device: cuda
 max_time: 0
 save_interval: 600  # save checkpoint every 10 minutes
+resume: True  # resume from latest checkpoint if available
 seed: 0
