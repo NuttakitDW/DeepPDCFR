@@ -523,12 +523,18 @@ class PostflopVRDeepPDCFR:
     ):
         """Run vectorized traversals to collect regret data for all combos."""
         opp = 1 - traverser
+        self.logger.info(
+            f"[it {self.num_iteration}][p{traverser}] traverse start | n={self.num_traversals}"
+        )
+        nodes_before = self.nodes_touched
+        episode_before = self.episode
 
         # Pre-encode combos for both players (shared across traversals on same board)
         trav_combos = game.valid_combos(traverser)
         opp_combos = game.valid_combos(opp)
+        progress_interval = max(1, self.num_traversals // 4)
 
-        for _ in range(self.num_traversals):
+        for tid in range(1, self.num_traversals + 1):
             self.episode += 1
             root = game.new_initial_state()
 
@@ -552,6 +558,13 @@ class PostflopVRDeepPDCFR:
                 root, traverser, encoder, game,
                 trav_combos, opp_combos, opp_reach,
             )
+            if tid % progress_interval == 0 or tid == self.num_traversals:
+                self.logger.info(
+                    f"[it {self.num_iteration}][p{traverser}] traverse {tid}/{self.num_traversals}"
+                )
+        self.logger.info(
+            f"[it {self.num_iteration}][p{traverser}] traverse done | +ep={self.episode - episode_before} | +nodes={self.nodes_touched - nodes_before}"
+        )
 
     def vectorized_dfs(
         self,
