@@ -6,7 +6,7 @@ pot_range: [3, 60]
 
 # Training (external sampling — fewer traversals, each processes ALL combos)
 num_iterations: 0  # 0 = run forever (stop manually or via max_time)
-num_traversals: 10000
+num_traversals: 1000
 evaluation_frequency: 3
 epsilon: 0.6
 
@@ -41,7 +41,7 @@ max_time: 0
 save_interval: 600  # save checkpoint every 10 minutes
 resume: True  # resume from latest checkpoint if available
 seed: 0
-traversal_workers: 1
+traversal_workers: 16
 traversal_device: null
 traversal_mp_context: spawn
 traversal_chunk_size: 0
