@@ -343,6 +343,11 @@ class ActionInfo(BaseModel):
         description="Amount as percentage of pot (0 for check/fold)",
         json_schema_extra={"example": 33.0},
     )
+    frequency: float = Field(
+        default=0.0,
+        description="Average frequency of this action across all combos (0.0–1.0)",
+        json_schema_extra={"example": 0.45},
+    )
 
 
 class HandStrategy(BaseModel):
