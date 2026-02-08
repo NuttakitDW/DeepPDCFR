@@ -1,5 +1,12 @@
+# DEVICE options:
+# - cpu (default)
+# - mps   (Apple Metal, if torch.backends.mps.is_available() is True)
+# - cuda  (NVIDIA CUDA build/device required)
+# Example: make train DEVICE=mps
+DEVICE ?= cpu
+
 train:
-	python -m deeppdcfr.exp configs/NLHEGeneralized.yaml
+	python scripts/run.py with configs/NLHEGeneralized.yaml device=$(DEVICE) --force
 
 serve:
 	uvicorn api.server:app --port 8000
