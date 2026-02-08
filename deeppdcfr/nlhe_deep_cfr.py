@@ -95,12 +95,19 @@ class ScenarioGenerator:
         self.streets = streets or ["flop", "turn", "river"]
         self.rng = np.random.RandomState(seed)
 
-        # Parse fixed bet configs if provided
-        self.fixed_oop_bet_config = self._parse_bet_config(fixed_oop_bet_config) if fixed_oop_bet_config else None
-        self.fixed_ip_bet_config = self._parse_bet_config(fixed_ip_bet_config) if fixed_ip_bet_config else None
+        # Parse fixed bet configs if provided (skip empty/placeholder dicts)
+        self.fixed_oop_bet_config = self._parse_bet_config(fixed_oop_bet_config) if self._has_bet_sizes(fixed_oop_bet_config) else None
+        self.fixed_ip_bet_config = self._parse_bet_config(fixed_ip_bet_config) if self._has_bet_sizes(fixed_ip_bet_config) else None
 
         # Pre-enumerate canonical flop combos (sample on demand)
         self._all_flops = list(self._enumerate_canonical_flops())
+
+    @staticmethod
+    def _has_bet_sizes(cfg) -> bool:
+        """Check if a bet config dict has actual bet sizes (not empty/None)."""
+        if not cfg or not isinstance(cfg, dict):
+            return False
+        return bool(cfg.get("bet")) or bool(cfg.get("raise"))
 
     @staticmethod
     def _parse_bet_config(raw: dict) -> StreetBetConfig:
