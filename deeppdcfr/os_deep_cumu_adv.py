@@ -52,6 +52,7 @@ class DeepCumuAdv:
         device="cpu",
         seed=0,
         force_large_game_random=True,
+        evaluate_at_start=False,
     ):
         def _as_bool(value):
             if isinstance(value, bool):
@@ -63,6 +64,7 @@ class DeepCumuAdv:
         self.game_name = game_name
         self.play_against_random = _as_bool(play_against_random)
         self.force_large_game_random = _as_bool(force_large_game_random)
+        self.evaluate_at_start = _as_bool(evaluate_at_start)
         self.logger = logger or Logger(writer_strings=[])
         self.game = self.load_game()
         self.num_players = self.game.num_players()
@@ -156,12 +158,29 @@ class DeepCumuAdv:
         )
 
     def solve(self):
-        self.evaluate()
+        self.logger.info(
+            "solve start | game={} | mode={} | episodes={} | traversals={} | eval_freq={}".format(
+                self.game_name,
+                "random_eval" if self.play_against_random else "exploitability_eval",
+                self.num_episodes,
+                self.num_traversals,
+                self.evaluation_frequency,
+            )
+        )
+        if self.evaluate_at_start:
+            self.evaluate()
+        else:
+            self.logger.info("skip initial evaluate (evaluate_at_start=false)")
         for _ in range(self.num_iterations):
             self.iteration()
 
     def iteration(self):
         self.num_iteration += 1
+        self.logger.info(
+            "iteration start | it={} | episode={} | nodes_touched={}".format(
+                self.num_iteration, self.episode, self.nodes_touched
+            )
+        )
         for player in range(self.num_players):
             self.collect_training_data(player)
             self.train_regret(player)
@@ -174,31 +193,90 @@ class DeepCumuAdv:
         ):
             self.train_average_policy()
             self.evaluate()
+        self.logger.info(
+            "iteration done | it={} | episode={} | nodes_touched={}".format(
+                self.num_iteration, self.episode, self.nodes_touched
+            )
+        )
 
     def collect_training_data(self, player):
         self.regret_trainers[player].reset_buffer()
-        for _ in range(self.num_traversals):
+        self.logger.info(
+            "collect start | it={} | player={} | traversals={}".format(
+                self.num_iteration, player, self.num_traversals
+            )
+        )
+        nodes_before = self.nodes_touched
+        episode_before = self.episode
+        progress_interval = 1000
+        for traversal_id in range(1, self.num_traversals + 1):
             self.episode += 1
             root_state = self.skip_chance_state(self.game.new_initial_state())
             self.dfs(root_state, player)
+            if traversal_id % progress_interval == 0 or traversal_id == self.num_traversals:
+                self.logger.info(
+                    "collect progress | it={} | player={} | traversals={}/{}".format(
+                        self.num_iteration, player, traversal_id, self.num_traversals
+                    )
+                )
+        self.logger.info(
+            "collect done | it={} | player={} | +episodes={} | +nodes={}".format(
+                self.num_iteration,
+                player,
+                self.episode - episode_before,
+                self.nodes_touched - nodes_before,
+            )
+        )
 
     def train_regret(self, player):
         if self.reinitialize_advantage_networks:
             self.regret_trainers[player].reset()
+        self.logger.info(
+            "regret train start | it={} | player={}".format(
+                self.num_iteration, player
+            )
+        )
         regret_loss = self.regret_trainers[player].train_model(self.num_iteration)
         self.logger.record("regret_loss_{}".format(player), regret_loss)
+        self.logger.info(
+            "regret train done | it={} | player={} | loss={}".format(
+                self.num_iteration, player, regret_loss
+            )
+        )
 
     def train_baseline(self, player):
+        self.logger.info(
+            "baseline train start | it={} | player={}".format(
+                self.num_iteration, player
+            )
+        )
         baseline_loss = self.q_value_trainer.train_model(self.num_iteration)
         if baseline_loss is not None:
             self.logger.record("baseline_loss_{}".format(player), baseline_loss)
+        self.logger.info(
+            "baseline train done | it={} | player={} | loss={}".format(
+                self.num_iteration, player, baseline_loss
+            )
+        )
 
     def train_average_policy(self):
+        self.logger.info("policy train start | it={}".format(self.num_iteration))
         self.ave_policy_trainer.reset()
         ave_policy_loss = self.ave_policy_trainer.train_model(self.num_iteration)
         self.logger.info("average policy loss: {}".format(ave_policy_loss))
+        self.logger.info(
+            "policy train done | it={} | loss={}".format(
+                self.num_iteration, ave_policy_loss
+            )
+        )
 
     def evaluate(self):
+        mode = "random_eval" if self.play_against_random else "exploitability_eval"
+        self.logger.info(
+            "evaluate start | mode={} | game={} | iteration={} | episode={}".format(
+                mode, self.game_name, self.num_iteration, self.episode
+            )
+        )
         self.logger.record("nodes_touched", self.nodes_touched)
         self.logger.record("iteration", self.num_iteration)
         self.logger.record("episode", self.episode)
@@ -217,12 +295,18 @@ class DeepCumuAdv:
                 )
             self.logger.record("reward", reward)
             self.logger.dump(step=self.episode)
+            self.logger.info(
+                "evaluate done | mode={} | reward={}".format(mode, reward)
+            )
         else:
             exp = evalute_explotability(
                 self.game, self.ave_policy_trainer.action_probabilities
             )
             self.logger.record("exp", exp)
             self.logger.dump(step=self.episode)
+            self.logger.info(
+                "evaluate done | mode={} | exp={}".format(mode, exp)
+            )
         self.save_checkpoint()
 
     def save_checkpoint(self):
@@ -603,7 +687,6 @@ class ReservoirBuffer:
 
     def reset(self):
         if hasattr(self, "cur_id"):
-            print(self.cur_id)
             self.cur_id = 0
             return
 

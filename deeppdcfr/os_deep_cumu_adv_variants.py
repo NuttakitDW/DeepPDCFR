@@ -43,6 +43,7 @@ class VRDeepDCFRPlus(DeepCumuAdv):
         device="cpu",
         seed=0,
         force_large_game_random=True,
+        evaluate_at_start=False,
     ):
         self.alpha = alpha
         super().__init__(
@@ -74,6 +75,7 @@ class VRDeepDCFRPlus(DeepCumuAdv):
             device,
             seed,
             force_large_game_random,
+            evaluate_at_start,
         )
 
     def init_regret_trainers(self):
@@ -129,6 +131,7 @@ class VRDeepPDCFRPlus(DeepCumuAdv):
         device="cpu",
         seed=0,
         force_large_game_random=True,
+        evaluate_at_start=False,
     ):
         self.alpha = alpha
         self.reinitialize_imm_regret_networks = reinitialize_imm_regret_networks
@@ -161,6 +164,7 @@ class VRDeepPDCFRPlus(DeepCumuAdv):
             device,
             seed,
             force_large_game_random,
+            evaluate_at_start,
         )
 
     def init_regret_trainers(self):
@@ -484,4 +488,3 @@ class VRPDCFRPlusQValueTrainer(QValueTrainer):
 
         self.model.load_state_dict(self.best_model.state_dict())
         return best_loss
-

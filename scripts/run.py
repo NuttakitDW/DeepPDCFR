@@ -17,6 +17,7 @@ def config():
     game_name = "KuhnPoker"
     log_folder = "logs"
     force_large_game_random = True
+    evaluate_at_start = False
 
     # logger
     writer_strings = ["stdout"]
