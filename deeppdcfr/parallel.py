@@ -99,6 +99,9 @@ def _dfs_worker(args):
     Args is a single dict to work with ProcessPoolExecutor.map().
     """
     os.environ["DEEPPDCFR_WORKER"] = "1"
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
     from deeppdcfr.game import read_game_config
     from deeppdcfr.os_deep_cumu_adv import ReservoirBuffer
 
@@ -342,6 +345,9 @@ def run_parallel_dfs(
 def _lbr_worker(args):
     """Worker for parallel LBR computation."""
     os.environ["DEEPPDCFR_WORKER"] = "1"
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
     from deeppdcfr.game import read_game_config
 
     game_name = args["game_name"]
