@@ -110,7 +110,6 @@ def _dfs_worker(args):
     infostate_size = args["infostate_size"]
     action_size = args["action_size"]
     network_layers = args["network_layers"]
-    buffer_size = args["buffer_size"]
     seed = args["seed"]
 
     # Model state dicts (one per player)
@@ -119,9 +118,12 @@ def _dfs_worker(args):
     imm_model_states = args.get("imm_model_states")  # None for non-PDCFR
     alpha = args.get("alpha")
 
-    # Ave policy model state dict + buffer info
+    # Ave policy model state dict
     ave_model_state = args["ave_model_state"]
-    ave_buffer_size = args["ave_buffer_size"]
+
+    # Worker buffers: sized to actual workload, not full config size.
+    # Each traversal produces ~100 entries max (generous upper bound for FHP).
+    worker_buffer_size = num_traversals * 100
 
     # Seed this worker's RNG
     np.random.seed(seed)
@@ -144,9 +146,9 @@ def _dfs_worker(args):
             im = _build_model(infostate_size, network_layers, action_size, imm_model_states[p])
             imm_models.append(im)
 
-    # Local buffers
-    regret_buffer = ReservoirBuffer(buffer_size, infostate_size, action_size, device="cpu")
-    ave_policy_buffer = ReservoirBuffer(ave_buffer_size, infostate_size, action_size, device="cpu")
+    # Local buffers (small, sized to worker's actual workload)
+    regret_buffer = ReservoirBuffer(worker_buffer_size, infostate_size, action_size, device="cpu")
+    ave_policy_buffer = ReservoirBuffer(worker_buffer_size, infostate_size, action_size, device="cpu")
 
     nodes_touched = 0
 
@@ -302,13 +304,11 @@ def run_parallel_dfs(
             "infostate_size": infostate_size,
             "action_size": action_size,
             "network_layers": network_layers,
-            "buffer_size": advantage_buffer_size,
             "model_states": model_states,
             "target_model_states": target_model_states,
             "imm_model_states": imm_model_states,
             "alpha": alpha,
             "ave_model_state": ave_model_state,
-            "ave_buffer_size": ave_policy_buffer_size,
             "seed": base_seed + w,
         })
 
