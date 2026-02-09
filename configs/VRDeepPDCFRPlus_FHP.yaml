@@ -1,0 +1,30 @@
+game_name: FHP
+algo_name: VRDeepPDCFRPlus
+
+
+num_episodes: 50000000
+advantage_buffer_size: 1000000
+ave_policy_buffer_size: 5000000
+learning_rate: 5.0e-4
+num_traversals: 30000
+advantage_network_train_steps: 1500
+ave_policy_network_train_steps: 8000
+ave_policy_batch_size: 4096
+advantage_batch_size: 4096
+reinitialize_advantage_networks: False
+reinitialize_imm_regret_networks: True
+use_regret_matching_argmax: True
+num_layers: 4
+num_hiddens: 256
+evaluation_frequency: 3
+epsilon: 0.6
+alpha: 2.3
+gamma: 2
+
+use_baseline: True
+baseline_buffer_size: 2000000
+baseline_batch_size: 4096
+baseline_network_train_steps: 1500
+
+save_log: True
+device: cuda

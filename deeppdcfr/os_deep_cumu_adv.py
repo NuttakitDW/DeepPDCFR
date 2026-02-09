@@ -1,4 +1,5 @@
 import math
+import os
 import random
 
 import numpy as np
@@ -213,6 +214,37 @@ class DeepCumuAdv:
             )
             self.logger.record("exp", exp)
             self.logger.dump(step=self.episode)
+        self.save_checkpoint()
+
+    def save_checkpoint(self):
+        if not self.logger.folder:
+            return
+        ckpt_dir = self.logger.folder / "checkpoints"
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+        checkpoint = {
+            'num_iteration': self.num_iteration,
+            'episode': self.episode,
+            'nodes_touched': self.nodes_touched,
+            'ave_policy_model': self.ave_policy_trainer.model.state_dict(),
+        }
+        for i, rt in enumerate(self.regret_trainers):
+            checkpoint[f'regret_model_{i}'] = rt.model.state_dict()
+            checkpoint[f'regret_target_model_{i}'] = rt.target_model.state_dict()
+            if hasattr(rt, 'imm_model'):
+                checkpoint[f'regret_imm_model_{i}'] = rt.imm_model.state_dict()
+        if self.use_baseline:
+            checkpoint['baseline_model'] = self.q_value_trainer.model.state_dict()
+
+        path = ckpt_dir / f"checkpoint_{self.episode}.pt"
+        torch.save(checkpoint, path)
+
+        latest = ckpt_dir / "latest.pt"
+        tmp = ckpt_dir / "latest.pt.tmp"
+        torch.save(checkpoint, tmp)
+        os.replace(tmp, latest)
+
+        self.logger.info(f"Saved checkpoint to {path}")
 
     def dfs(
         self,
