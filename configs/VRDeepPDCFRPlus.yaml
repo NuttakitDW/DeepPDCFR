@@ -16,7 +16,7 @@ reinitialize_imm_regret_networks: True
 use_regret_matching_argmax: True
 num_layers: 3
 num_hiddens: 64
-evaluation_frequency: 3
+evaluation_frequency: 10
 epsilon: 0.6
 alpha: 2.3
 gamma: 2
