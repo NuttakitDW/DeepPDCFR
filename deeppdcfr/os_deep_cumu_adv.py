@@ -52,8 +52,10 @@ class DeepCumuAdv:
         num_lbr_samples=10000,
         device="cpu",
         seed=0,
+        num_workers=1,
     ):
         self.game_name = game_name
+        self.num_workers = num_workers
         self.play_against_random = play_against_random
         self.logger = logger or Logger(writer_strings=[])
         self.game = self.load_game()
@@ -170,10 +172,52 @@ class DeepCumuAdv:
 
     def collect_training_data(self, player):
         self.regret_trainers[player].reset_buffer()
+        if self.num_workers > 1:
+            self._collect_training_data_parallel(player)
+        else:
+            self._collect_training_data_sequential(player)
+
+    def _collect_training_data_sequential(self, player):
         for _ in range(self.num_traversals):
             self.episode += 1
             root_state = self.skip_chance_state(self.game.new_initial_state())
             self.dfs(root_state, player)
+
+    def _collect_training_data_parallel(self, player):
+        from deeppdcfr.parallel import run_parallel_dfs, _merge_buffer_data
+
+        result = run_parallel_dfs(
+            game_name=self.game_name,
+            player=player,
+            num_traversals=self.num_traversals,
+            num_workers=self.num_workers,
+            num_iteration=self.num_iteration,
+            epsilon=self.epsilon,
+            fit_advantage=self.fit_advantage,
+            max_utility=self.max_utility,
+            use_regret_matching_argmax=self.use_regret_matching_argmax,
+            infostate_size=self.infostate_size,
+            action_size=self.action_size,
+            network_layers=self.network_layers,
+            advantage_buffer_size=self.advantage_buffer_size,
+            ave_policy_buffer_size=self.ave_policy_buffer_size,
+            regret_trainers=self.regret_trainers,
+            ave_policy_trainer=self.ave_policy_trainer,
+            base_seed=self.episode,
+        )
+
+        # Merge regret data into player's buffer
+        _merge_buffer_data(
+            self.regret_trainers[player].buffer,
+            result["regret_data_list"],
+        )
+        # Merge ave policy data
+        _merge_buffer_data(
+            self.ave_policy_trainer.buffer,
+            result["ave_policy_data_list"],
+        )
+        self.nodes_touched += result["nodes_touched"]
+        self.episode += self.num_traversals
 
     def train_regret(self, player):
         if self.reinitialize_advantage_networks:
@@ -197,11 +241,23 @@ class DeepCumuAdv:
         self.logger.record("episode", self.episode)
         if self.play_against_random:
             if self.poker_game:
-                lbr_exp = compute_lbr(
-                    self.game,
-                    self.ave_policy_trainer.action_probabilities,
-                    self.num_lbr_samples,
-                )
+                if self.num_workers > 1:
+                    from deeppdcfr.parallel import compute_lbr_parallel
+                    lbr_exp = compute_lbr_parallel(
+                        game_name=self.game_name,
+                        num_lbr_samples=self.num_lbr_samples,
+                        num_workers=self.num_workers,
+                        infostate_size=self.infostate_size,
+                        action_size=self.action_size,
+                        network_layers=self.network_layers,
+                        ave_policy_trainer=self.ave_policy_trainer,
+                    )
+                else:
+                    lbr_exp = compute_lbr(
+                        self.game,
+                        self.ave_policy_trainer.action_probabilities,
+                        self.num_lbr_samples,
+                    )
                 self.logger.record("lbr_exp", lbr_exp)
             else:
                 reward = play_n_games_against_random(

@@ -43,6 +43,7 @@ class VRDeepDCFRPlus(DeepCumuAdv):
         alpha=1.5,
         device="cpu",
         seed=0,
+        num_workers=1,
     ):
         self.alpha = alpha
         super().__init__(
@@ -74,6 +75,7 @@ class VRDeepDCFRPlus(DeepCumuAdv):
             num_lbr_samples,
             device,
             seed,
+            num_workers,
         )
 
     def init_regret_trainers(self):
@@ -129,6 +131,7 @@ class VRDeepPDCFRPlus(DeepCumuAdv):
         num_lbr_samples=10000,
         device="cpu",
         seed=0,
+        num_workers=1,
     ):
         self.alpha = alpha
         self.reinitialize_imm_regret_networks = reinitialize_imm_regret_networks
@@ -161,6 +164,7 @@ class VRDeepPDCFRPlus(DeepCumuAdv):
             num_lbr_samples,
             device,
             seed,
+            num_workers,
         )
 
     def init_regret_trainers(self):

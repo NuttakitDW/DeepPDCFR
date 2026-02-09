@@ -27,6 +27,7 @@ baseline_batch_size: 4096
 baseline_network_train_steps: 1500
 
 num_lbr_samples: 10000
+num_workers: 56
 
 save_log: True
-device: cuda
+device: cpu

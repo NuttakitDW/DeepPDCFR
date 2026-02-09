@@ -41,6 +41,7 @@ def config():
     num_random_games = 20000
     num_lbr_samples = 10000
     device = "cpu"
+    num_workers = 1
 
     # baseline
     use_baseline = False
