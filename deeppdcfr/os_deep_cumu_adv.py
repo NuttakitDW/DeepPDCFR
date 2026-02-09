@@ -351,7 +351,7 @@ class DeepCumuAdv:
         self.poker_game = game_config.poker
         if game_config.large_game:
             if not self.play_against_random:
-                self.logger.warn("The game is too large, play against random instead.")
+                self.logger.warn("Large game detected, using LBR for exploitability estimation.")
             self.play_against_random = True
 
         game = game_config.load_game()
