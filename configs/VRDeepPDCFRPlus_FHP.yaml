@@ -16,7 +16,7 @@ reinitialize_imm_regret_networks: True
 use_regret_matching_argmax: True
 num_layers: 4
 num_hiddens: 256
-evaluation_frequency: 3
+evaluation_frequency: 10
 epsilon: 0.6
 alpha: 2.3
 gamma: 2
@@ -25,6 +25,8 @@ use_baseline: True
 baseline_buffer_size: 2000000
 baseline_batch_size: 4096
 baseline_network_train_steps: 1500
+
+num_lbr_samples: 10000
 
 save_log: True
 device: cuda
