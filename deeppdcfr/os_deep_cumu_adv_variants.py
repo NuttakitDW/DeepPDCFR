@@ -39,6 +39,7 @@ class VRDeepDCFRPlus(DeepCumuAdv):
         gamma=4,
         play_against_random=False,
         num_random_games=20000,
+        num_lbr_samples=10000,
         alpha=1.5,
         device="cpu",
         seed=0,
@@ -70,6 +71,7 @@ class VRDeepDCFRPlus(DeepCumuAdv):
             gamma,
             play_against_random,
             num_random_games,
+            num_lbr_samples,
             device,
             seed,
         )
@@ -124,6 +126,7 @@ class VRDeepPDCFRPlus(DeepCumuAdv):
         gamma=5,
         play_against_random=False,
         num_random_games=20000,
+        num_lbr_samples=10000,
         device="cpu",
         seed=0,
     ):
@@ -155,6 +158,7 @@ class VRDeepPDCFRPlus(DeepCumuAdv):
             gamma,
             play_against_random,
             num_random_games,
+            num_lbr_samples,
             device,
             seed,
         )

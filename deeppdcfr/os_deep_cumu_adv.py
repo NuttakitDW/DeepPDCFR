@@ -16,8 +16,8 @@ from deeppdcfr.utils import (
     set_seed,
     SpielState,
     evalute_explotability,
+    compute_lbr,
     play_n_games_against_random,
-    play_n_poker_games_against_random,
 )
 
 
@@ -49,6 +49,7 @@ class DeepCumuAdv:
         gamma=0,
         play_against_random=False,
         num_random_games=20000,
+        num_lbr_samples=10000,
         device="cpu",
         seed=0,
     ):
@@ -78,6 +79,7 @@ class DeepCumuAdv:
         self.network_layers = [num_hiddens for _ in range(num_layers)]
         self.epsilon = epsilon
         self.num_random_games = num_random_games
+        self.num_lbr_samples = num_lbr_samples
         self.fit_advantage = fit_advantage
         self.use_baseline = use_baseline
         self.baseline_buffer_size = baseline_buffer_size
@@ -195,18 +197,19 @@ class DeepCumuAdv:
         self.logger.record("episode", self.episode)
         if self.play_against_random:
             if self.poker_game:
-                reward = play_n_poker_games_against_random(
+                lbr_exp = compute_lbr(
                     self.game,
                     self.ave_policy_trainer.action_probabilities,
-                    self.num_random_games,
+                    self.num_lbr_samples,
                 )
+                self.logger.record("lbr_exp", lbr_exp)
             else:
                 reward = play_n_games_against_random(
                     self.game,
                     self.ave_policy_trainer.action_probabilities,
                     self.num_random_games,
                 )
-            self.logger.record("reward", reward)
+                self.logger.record("reward", reward)
             self.logger.dump(step=self.episode)
         else:
             exp = evalute_explotability(

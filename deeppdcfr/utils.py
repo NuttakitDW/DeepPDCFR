@@ -45,6 +45,69 @@ def evalute_explotability(game: SpielGame, callable_func: Callable) -> float:
     return exp
 
 
+def compute_lbr(game: SpielGame, policy_fn: Callable, num_samples: int = 10000) -> float:
+    """Approximate exploitability via Monte Carlo Local Best Response.
+
+    For each player as the exploiter, sample ``num_samples`` deals and compute the
+    best-response value against the opponent's ``policy_fn``. Returns the average
+    of the two LBR values (an approximation of exploitability).
+    """
+    rescaled_fn = rescale_func(policy_fn)
+    lbr_values = []
+    for exploiter in range(2):
+        total = 0.0
+        for _ in range(num_samples):
+            state = game.new_initial_state()
+            # Sample all initial chance nodes (the deal)
+            while state.is_chance_node():
+                outcomes, probs = zip(*state.chance_outcomes())
+                aidx = np.random.choice(len(outcomes), p=probs)
+                state.apply_action(outcomes[aidx])
+            total += _lbr_traverse(state, exploiter, rescaled_fn)
+        lbr_values.append(total / num_samples)
+    return (lbr_values[0] + lbr_values[1]) / 2
+
+
+def _lbr_traverse(state: SpielState, exploiter: int, policy_fn: Callable) -> float:
+    """Recursive tree walk for LBR.
+
+    - Exploiter nodes: try all legal actions, pick the max value (best response).
+    - Opponent nodes: weight all actions by policy probabilities (exact EV).
+    - Chance nodes (mid-game, e.g. board cards): sample one outcome randomly.
+    - Terminal: return payoff for the exploiter.
+    """
+    if state.is_terminal():
+        return state.returns()[exploiter]
+
+    if state.is_chance_node():
+        outcomes, probs = zip(*state.chance_outcomes())
+        aidx = np.random.choice(len(outcomes), p=probs)
+        state.apply_action(outcomes[aidx])
+        return _lbr_traverse(state, exploiter, policy_fn)
+
+    current_player = state.current_player()
+    legal_actions = state.legal_actions()
+
+    if current_player == exploiter:
+        # Best response: try all actions, pick max
+        best_value = -float('inf')
+        for action in legal_actions:
+            child = state.child(action)
+            value = _lbr_traverse(child, exploiter, policy_fn)
+            if value > best_value:
+                best_value = value
+        return best_value
+    else:
+        # Opponent: weight by policy (exact expected value)
+        probs = policy_fn(state)
+        ev = 0.0
+        for action in legal_actions:
+            prob = probs.get(action, 0.0) if isinstance(probs, dict) else probs[action]
+            child = state.child(action)
+            ev += prob * _lbr_traverse(child, exploiter, policy_fn)
+        return ev
+
+
 def play_n_games_against_random(
     game: SpielGame, callable_func: Callable, num_random_games: int
 ) -> float:
