@@ -8,8 +8,6 @@ class Lookup:
         file = Path(__file__).parents[1].absolute() / "matrix" / "random_board_wp.npy"
         self.random_board_wp = np.load(str(file))
 
-        file = Path(__file__).parents[1].absolute() / "matrix" / "flop_matrix.npy"
-        self.flop_matrix = np.load(str(file))
 
     def check(self, a, b):
         if b == None or a == None:
@@ -46,13 +44,7 @@ class Lookup:
         return wp
 
     def calc3(self, hand1, board, opponent_range):
-        hand_ids = [card_tools.card_to_id(card) for card in hand1]
-        board_ids = [card_tools.card_to_id(card) for card in board]
-        hand_ids.sort()
-        board_ids.sort()
-        return self.flop_matrix[
-            board_ids[0], board_ids[1], board_ids[2], hand_ids[0], hand_ids[1]
-        ]
+        return self.calc1(hand1, board, opponent_range)
 
     def calc2(self, hand1, board, opponent_range):
         wp = 0
