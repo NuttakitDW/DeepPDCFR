@@ -17,6 +17,37 @@ def config():
     game_name = "KuhnPoker"
     log_folder = "logs"
 
+    # training
+    num_episodes = 10000000
+    advantage_buffer_size = 1000000
+    ave_policy_buffer_size = 1000000
+    learning_rate = 1e-3
+    num_traversals = 10000
+    advantage_network_train_steps = 750
+    ave_policy_network_train_steps = 5000
+    advantage_batch_size = 2048
+    ave_policy_batch_size = 2048
+    num_layers = 3
+    num_hiddens = 64
+    evaluation_frequency = 10
+    reinitialize_advantage_networks = True
+    reinitialize_imm_regret_networks = True
+    use_regret_matching_argmax = True
+    epsilon = 0.6
+    alpha = 2.3
+    gamma = 2
+    fit_advantage = True
+    play_against_random = False
+    num_random_games = 20000
+    num_lbr_samples = 10000
+    device = "cpu"
+
+    # baseline
+    use_baseline = False
+    baseline_buffer_size = 1000000
+    baseline_batch_size = 2048
+    baseline_network_train_steps = 1000
+
     # logger
     writer_strings = ["stdout"]
     save_log = False
