@@ -51,9 +51,18 @@ class DeepCumuAdv:
         num_random_games=20000,
         device="cpu",
         seed=0,
+        force_large_game_random=True,
     ):
+        def _as_bool(value):
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+            return bool(value)
+
         self.game_name = game_name
-        self.play_against_random = play_against_random
+        self.play_against_random = _as_bool(play_against_random)
+        self.force_large_game_random = _as_bool(force_large_game_random)
         self.logger = logger or Logger(writer_strings=[])
         self.game = self.load_game()
         self.num_players = self.game.num_players()
@@ -346,7 +355,7 @@ class DeepCumuAdv:
     def load_game(self):
         game_config = read_game_config(self.game_name)
         self.poker_game = game_config.poker
-        if game_config.large_game:
+        if game_config.large_game and self.force_large_game_random:
             if not self.play_against_random:
                 self.logger.warn("The game is too large, play against random instead.")
             self.play_against_random = True

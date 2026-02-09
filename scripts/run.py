@@ -16,6 +16,7 @@ def config():
     algo_name = "CFR"
     game_name = "KuhnPoker"
     log_folder = "logs"
+    force_large_game_random = True
 
     # logger
     writer_strings = ["stdout"]
