@@ -4,14 +4,12 @@ Workers run independent batches of DFS traversals with local buffers.
 Models are passed as state_dicts and reconstructed in each worker (CPU-only).
 """
 
+import os
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import torch
-
-from deeppdcfr.game import read_game_config
-from deeppdcfr.os_deep_cumu_adv import MLP, ReservoirBuffer
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +53,7 @@ def _model_forward(model, x, mask):
 
 def _build_model(input_size, network_layers, output_size, state_dict):
     """Rebuild an MLP from state_dict on CPU."""
+    from deeppdcfr.os_deep_cumu_adv import MLP
     model = MLP(input_size, network_layers, output_size)
     model.load_state_dict(state_dict)
     model.eval()
@@ -99,6 +98,10 @@ def _dfs_worker(args):
 
     Args is a single dict to work with ProcessPoolExecutor.map().
     """
+    os.environ["DEEPPDCFR_WORKER"] = "1"
+    from deeppdcfr.game import read_game_config
+    from deeppdcfr.os_deep_cumu_adv import ReservoirBuffer
+
     game_name = args["game_name"]
     player = args["player"]
     num_traversals = args["num_traversals"]
@@ -338,6 +341,9 @@ def run_parallel_dfs(
 
 def _lbr_worker(args):
     """Worker for parallel LBR computation."""
+    os.environ["DEEPPDCFR_WORKER"] = "1"
+    from deeppdcfr.game import read_game_config
+
     game_name = args["game_name"]
     num_samples = args["num_samples"]
     exploiter = args["exploiter"]
