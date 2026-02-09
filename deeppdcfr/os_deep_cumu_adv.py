@@ -186,6 +186,7 @@ class DeepCumuAdv:
     def _collect_training_data_parallel(self, player):
         from deeppdcfr.parallel import run_parallel_dfs, _merge_buffer_data
 
+        self.logger.info(f"Launching {self.num_workers} parallel DFS workers for player {player}...")
         result = run_parallel_dfs(
             game_name=self.game_name,
             player=player,
@@ -218,6 +219,7 @@ class DeepCumuAdv:
         )
         self.nodes_touched += result["nodes_touched"]
         self.episode += self.num_traversals
+        self.logger.info(f"Parallel DFS done: {result['nodes_touched']} nodes touched")
 
     def train_regret(self, player):
         if self.reinitialize_advantage_networks:
@@ -241,23 +243,11 @@ class DeepCumuAdv:
         self.logger.record("episode", self.episode)
         if self.play_against_random:
             if self.poker_game:
-                if self.num_workers > 1:
-                    from deeppdcfr.parallel import compute_lbr_parallel
-                    lbr_exp = compute_lbr_parallel(
-                        game_name=self.game_name,
-                        num_lbr_samples=self.num_lbr_samples,
-                        num_workers=self.num_workers,
-                        infostate_size=self.infostate_size,
-                        action_size=self.action_size,
-                        network_layers=self.network_layers,
-                        ave_policy_trainer=self.ave_policy_trainer,
-                    )
-                else:
-                    lbr_exp = compute_lbr(
-                        self.game,
-                        self.ave_policy_trainer.action_probabilities,
-                        self.num_lbr_samples,
-                    )
+                lbr_exp = compute_lbr(
+                    self.game,
+                    self.ave_policy_trainer.action_probabilities,
+                    self.num_lbr_samples,
+                )
                 self.logger.record("lbr_exp", lbr_exp)
             else:
                 reward = play_n_games_against_random(
