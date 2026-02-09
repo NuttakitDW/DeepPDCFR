@@ -1,7 +1,11 @@
 import os
 
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
+# Allow PyTorch to use multiple threads during training.
+# Workers set DEEPPDCFR_WORKER=1 and run single-threaded numpy,
+# so this only affects the main process training loop.
+os.environ["OPENBLAS_NUM_THREADS"] = os.environ.get("OPENBLAS_NUM_THREADS", "8")
+os.environ["MKL_NUM_THREADS"] = os.environ.get("MKL_NUM_THREADS", "8")
+os.environ["OMP_NUM_THREADS"] = os.environ.get("OMP_NUM_THREADS", "8")
 
 from pathlib import Path
 
