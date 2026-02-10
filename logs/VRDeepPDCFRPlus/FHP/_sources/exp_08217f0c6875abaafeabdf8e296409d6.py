@@ -30,7 +30,7 @@ class ServerFileStorageObserver(FileStorageObserver):
         for folder in os.listdir(self.basedir):
             if "-" in folder:
                 a, b = folder.split("-")
-                if int(a) == self.server_id:
+                if int(a) == "server_id":
                     b = int(b)
                     dir_nrs.append(b)
         if dir_nrs:

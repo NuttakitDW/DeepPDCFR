@@ -1,0 +1,59 @@
+{
+  "advantage_batch_size": 4096,
+  "advantage_buffer_size": 1000000,
+  "advantage_network_train_steps": 1500,
+  "algo_name": "VRDeepPDCFRPlus",
+  "alpha": 2.3,
+  "ave_policy_batch_size": 4096,
+  "ave_policy_buffer_size": 5000000,
+  "ave_policy_network_train_steps": 8000,
+  "baseline_batch_size": 4096,
+  "baseline_buffer_size": 2000000,
+  "baseline_network_train_steps": 1500,
+  "device": "cpu",
+  "epsilon": 0.6,
+  "evaluation_frequency": 10,
+  "fit_advantage": true,
+  "folder": {
+    "py/reduce": [
+      {
+        "py/type": "pathlib.PosixPath"
+      },
+      {
+        "py/tuple": [
+          "/",
+          "home",
+          "ec2-user",
+          "DeepPDCFR",
+          "logs",
+          "VRDeepPDCFRPlus",
+          "FHP"
+        ]
+      }
+    ]
+  },
+  "game_name": "FHP",
+  "gamma": 2,
+  "learning_rate": 0.0005,
+  "log_folder": "logs",
+  "num_episodes": 50000000,
+  "num_hiddens": 256,
+  "num_layers": 4,
+  "num_lbr_samples": 10000,
+  "num_random_games": 20000,
+  "num_traversals": 30000,
+  "num_workers": 1,
+  "play_against_random": false,
+  "reinitialize_advantage_networks": false,
+  "reinitialize_imm_regret_networks": true,
+  "save_log": true,
+  "seed": 0,
+  "use_baseline": true,
+  "use_regret_matching_argmax": true,
+  "writer_strings": [
+    "stdout",
+    "csv",
+    "sacred",
+    "tensorboard"
+  ]
+}

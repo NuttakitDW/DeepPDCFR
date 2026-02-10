@@ -1,0 +1,105 @@
+{
+  "artifacts": [],
+  "command": "main",
+  "experiment": {
+    "base_dir": "/home/ec2-user/DeepPDCFR/deeppdcfr",
+    "dependencies": [
+      "numpy==1.26.4",
+      "pyyaml==6.0.3",
+      "sacred==0.8.7"
+    ],
+    "mainfile": "exp.py",
+    "name": "default",
+    "repositories": [
+      {
+        "commit": "757319a161a1cf61f42a1f2e80a8e826a7e7ab51",
+        "dirty": false,
+        "url": "https://github.com/NuttakitDW/DeepPDCFR.git"
+      },
+      {
+        "commit": "757319a161a1cf61f42a1f2e80a8e826a7e7ab51",
+        "dirty": false,
+        "url": "https://github.com/NuttakitDW/DeepPDCFR.git"
+      },
+      {
+        "commit": "757319a161a1cf61f42a1f2e80a8e826a7e7ab51",
+        "dirty": false,
+        "url": "https://github.com/NuttakitDW/DeepPDCFR.git"
+      }
+    ],
+    "sources": [
+      [
+        "__init__.py",
+        "_sources/__init___56b0ccb13bb370ff826e85fd4cb52979.py"
+      ],
+      [
+        "exp.py",
+        "_sources/exp_08217f0c6875abaafeabdf8e296409d6.py"
+      ],
+      [
+        "utils.py",
+        "_sources/utils_d113cb40cf833a506e9f6a448ebeceec.py"
+      ]
+    ]
+  },
+  "fail_trace": [
+    "Traceback (most recent call last):\n",
+    "  File \"/home/ec2-user/.local/lib/python3.11/site-packages/sacred/run.py\", line 326, in _emit_started\n    _id = observer.started_event(\n          ^^^^^^^^^^^^^^^^^^^^^^^\n",
+    "  File \"/home/ec2-user/.local/lib/python3.11/site-packages/sacred/observers/file_storage.py\", line 173, in started_event\n    self._make_run_dir(_id)\n",
+    "  File \"/home/ec2-user/.local/lib/python3.11/site-packages/sacred/observers/file_storage.py\", line 131, in _make_run_dir\n    os.mkdir(self.dir)\n",
+    "FileExistsError: [Errno 17] File exists: 'logs/VRDeepPDCFRPlus/FHP/206-10'\n"
+  ],
+  "heartbeat": null,
+  "host": {
+    "ENV": {},
+    "cpu": "Intel(R) Xeon(R) Platinum 8488C",
+    "hostname": "ip-172-31-28-206.ap-southeast-1.compute.internal",
+    "os": [
+      "Linux",
+      "Linux-6.1.161-183.298.amzn2023.x86_64-x86_64-with-glibc2.34"
+    ],
+    "python_version": "3.11.7"
+  },
+  "meta": {
+    "command": "main",
+    "config_updates": {
+      "num_workers": 64
+    },
+    "named_configs": [
+      "configs/VRDeepPDCFRPlus_FHP.yaml"
+    ],
+    "options": {
+      "--beat-interval": null,
+      "--capture": null,
+      "--comment": null,
+      "--debug": false,
+      "--enforce_clean": false,
+      "--file_storage": "logs/VRDeepPDCFRPlus/FHP",
+      "--force": false,
+      "--help": false,
+      "--id": null,
+      "--loglevel": null,
+      "--mongo_db": null,
+      "--name": null,
+      "--pdb": false,
+      "--print-config": false,
+      "--priority": null,
+      "--queue": false,
+      "--s3": null,
+      "--sql": null,
+      "--tiny_db": null,
+      "--unobserved": false,
+      "COMMAND": null,
+      "UPDATE": [
+        "configs/VRDeepPDCFRPlus_FHP.yaml",
+        "num_workers=64"
+      ],
+      "help": false,
+      "with": true
+    }
+  },
+  "resources": [],
+  "start_time": "2026-02-10T05:20:40.579948",
+  "status": "FAILED",
+  "stop_time": "2026-02-10T05:20:40.583196"
+}

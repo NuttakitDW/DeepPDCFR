@@ -56,8 +56,8 @@ def config():
     # logger
     writer_strings = ["stdout"]
     save_log = False
+    folder = Path(__file__).parents[1] / log_folder / algo_name / game_name
     if save_log:
-        folder = Path(__file__).parents[1] / log_folder / algo_name / game_name
         writer_strings += ["csv", "sacred", "tensorboard"]
         ex.observers.append(ServerFileStorageObserver(folder))
 
