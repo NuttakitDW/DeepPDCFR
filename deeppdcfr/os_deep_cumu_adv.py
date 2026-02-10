@@ -207,7 +207,11 @@ class DeepCumuAdv:
                 )
 
     def _collect_training_data_parallel(self, player):
-        from deeppdcfr.parallel import run_parallel_dfs, _merge_buffer_data
+        from deeppdcfr.parallel import (
+            run_parallel_dfs,
+            _merge_buffer_data,
+            _merge_circular_buffer_data,
+        )
 
         self.logger.info(f"Launching {self.num_workers} parallel DFS workers for player {player}...")
         result = run_parallel_dfs(
@@ -227,6 +231,8 @@ class DeepCumuAdv:
             ave_policy_buffer_size=self.ave_policy_buffer_size,
             regret_trainers=self.regret_trainers,
             ave_policy_trainer=self.ave_policy_trainer,
+            use_baseline=self.use_baseline,
+            q_value_trainer=self.q_value_trainer if self.use_baseline else None,
             base_seed=self.episode,
             log_fn=self.logger.info,
             log_iteration=self.num_iteration,
@@ -243,6 +249,11 @@ class DeepCumuAdv:
             self.ave_policy_trainer.buffer,
             result["ave_policy_data_list"],
         )
+        if self.use_baseline:
+            _merge_circular_buffer_data(
+                self.q_value_trainer.buffer,
+                result["baseline_data_list"],
+            )
         self.nodes_touched += result["nodes_touched"]
         self.episode += self.num_traversals
         self.logger.info(f"Parallel DFS done: {result['nodes_touched']} nodes touched")

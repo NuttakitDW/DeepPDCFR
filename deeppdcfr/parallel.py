@@ -89,6 +89,38 @@ def _merge_buffer_data(target_buffer, worker_data_list):
             )
 
 
+def _extract_circular_buffer(buf):
+    """Extract filled portion of a CircularBuffer as numpy arrays."""
+    n = len(buf)
+    return {
+        "history": buf.history_buf[:n].copy(),
+        "action": buf.action_buf[:n].copy(),
+        "next_history": buf.next_history_buf[:n].copy(),
+        "next_state": buf.next_state_buf[:n].copy(),
+        "next_legal_actions_mask": buf.next_legal_actions_mask_buf[:n].copy(),
+        "next_player": buf.next_player_buf[:n].copy(),
+        "done": buf.done_buf[:n].copy(),
+        "reward": buf.reward_buf[:n].copy(),
+    }
+
+
+def _merge_circular_buffer_data(target_buffer, worker_data_list):
+    """Merge extracted CircularBuffer data from workers into target buffer."""
+    for data in worker_data_list:
+        n = len(data["history"])
+        for i in range(n):
+            target_buffer.add(
+                data["history"][i],
+                int(data["action"][i]),
+                data["next_history"][i],
+                data["next_state"][i],
+                data["next_legal_actions_mask"][i],
+                int(data["next_player"][i]),
+                int(data["done"][i]),
+                float(data["reward"][i]),
+            )
+
+
 # ---------------------------------------------------------------------------
 # Worker function
 # ---------------------------------------------------------------------------
@@ -103,7 +135,7 @@ def _dfs_worker(args):
     os.environ["MKL_NUM_THREADS"] = "1"
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
     from deeppdcfr.game import read_game_config
-    from deeppdcfr.os_deep_cumu_adv import ReservoirBuffer
+    from deeppdcfr.os_deep_cumu_adv import ReservoirBuffer, CircularBuffer
 
     game_name = args["game_name"]
     player = args["player"]
@@ -124,9 +156,8 @@ def _dfs_worker(args):
     target_model_states = args["target_model_states"]
     imm_model_states = args.get("imm_model_states")  # None for non-PDCFR
     alpha = args.get("alpha")
-
-    # Ave policy model state dict
-    ave_model_state = args["ave_model_state"]
+    use_baseline = bool(args.get("use_baseline", False))
+    q_model_state = args.get("q_model_state")
 
     # Worker buffers: sized to actual workload, not full config size.
     # Each traversal produces ~100 entries max (generous upper bound for FHP).
@@ -153,6 +184,22 @@ def _dfs_worker(args):
             im = _build_model(infostate_size, network_layers, action_size, imm_model_states[p])
             imm_models.append(im)
 
+    q_model = None
+    history_size = None
+    baseline_buffer = None
+    if use_baseline:
+        root_state = game.new_initial_state()
+        history_size = len(
+            np.append(
+                root_state.information_state_tensor(0),
+                root_state.information_state_tensor(1),
+            )
+        )
+        q_model = _build_model(history_size, network_layers, action_size, q_model_state)
+        baseline_buffer = CircularBuffer(
+            worker_buffer_size, history_size, infostate_size, action_size, device="cpu"
+        )
+
     # Local buffers (small, sized to worker's actual workload)
     regret_buffer = ReservoirBuffer(worker_buffer_size, infostate_size, action_size, device="cpu")
     ave_policy_buffer = ReservoirBuffer(worker_buffer_size, infostate_size, action_size, device="cpu")
@@ -178,6 +225,19 @@ def _dfs_worker(args):
             aid = np.random.choice(range(len(actions)), p=probs)
             s.apply_action(actions[aid])
         return s
+
+    def get_history_tensor(s):
+        return np.append(
+            s.information_state_tensor(0),
+            s.information_state_tensor(1),
+        )
+
+    def get_baseline(s, traverser):
+        history = get_history_tensor(s)
+        mask = np.array(s.legal_actions_mask(), dtype=float)
+        coef = 1 if traverser == 0 else -1
+        q = _model_forward(q_model, history, mask)
+        return q * coef
 
     def dfs(s, traverser, my_reach=1.0, opp_reach=1.0, opp_sample_reach=1.0, sample_reach=1.0):
         nonlocal nodes_touched
@@ -209,7 +269,10 @@ def _dfs_worker(args):
                 s.legal_actions_mask(),
                 num_iteration,
             )
-            q_values = np.zeros_like(policy)
+            if use_baseline:
+                q_values = get_baseline(s, traverser)
+            else:
+                q_values = np.zeros_like(policy)
             action_value = dfs(
                 ns, traverser, my_reach, opp_reach * prob,
                 opp_sample_reach * sample_prob, sample_reach * sample_prob,
@@ -218,7 +281,10 @@ def _dfs_worker(args):
             value = np.dot(q_values, policy)
         else:
             # Traverser node
-            q_values = np.zeros_like(policy)
+            if use_baseline:
+                q_values = get_baseline(s, traverser)
+            else:
+                q_values = np.zeros_like(policy)
             action_value = dfs(
                 ns, traverser, my_reach * prob, opp_reach,
                 opp_sample_reach, sample_reach * sample_prob,
@@ -236,6 +302,21 @@ def _dfs_worker(args):
                 s.legal_actions_mask(),
                 num_iteration,
             )
+
+        if use_baseline:
+            next_state = ns.information_state_tensor() if not ns.is_terminal() else np.zeros([infostate_size], dtype=float)
+            next_legal_actions_mask = ns.legal_actions_mask() if not ns.is_terminal() else np.zeros([action_size], dtype=int)
+            next_player = ns.current_player() if not ns.is_terminal() else 0
+            baseline_buffer.add(
+                get_history_tensor(s),
+                action,
+                get_history_tensor(ns),
+                next_state,
+                next_legal_actions_mask,
+                next_player,
+                int(ns.is_terminal()),
+                ns.returns()[0] / max_utility,
+            )
         return value
 
     # Run traversals
@@ -248,6 +329,7 @@ def _dfs_worker(args):
         "num_traversals": num_traversals,
         "regret_data": _extract_buffer(regret_buffer),
         "ave_policy_data": _extract_buffer(ave_policy_buffer),
+        "baseline_data": _extract_circular_buffer(baseline_buffer) if use_baseline else None,
         "nodes_touched": nodes_touched,
     }
 
@@ -274,6 +356,8 @@ def run_parallel_dfs(
     regret_trainers,
     ave_policy_trainer,
     base_seed,
+    use_baseline=False,
+    q_value_trainer=None,
     log_fn=None,
     log_iteration=None,
     log_player=None,
@@ -297,6 +381,9 @@ def run_parallel_dfs(
             alpha = rt.alpha
 
     ave_model_state = {k: v.cpu() for k, v in ave_policy_trainer.model.state_dict().items()}
+    q_model_state = None
+    if use_baseline and q_value_trainer is not None:
+        q_model_state = {k: v.cpu() for k, v in q_value_trainer.model.state_dict().items()}
 
     # Divide traversals among workers
     base_count = num_traversals // num_workers
@@ -322,6 +409,8 @@ def run_parallel_dfs(
             "imm_model_states": imm_model_states,
             "alpha": alpha,
             "ave_model_state": ave_model_state,
+            "use_baseline": use_baseline,
+            "q_model_state": q_model_state,
             "seed": base_seed + w,
         })
 
@@ -352,14 +441,18 @@ def run_parallel_dfs(
     total_nodes = 0
     regret_data_list = []
     ave_policy_data_list = []
+    baseline_data_list = []
     for r in results:
         total_nodes += r["nodes_touched"]
         regret_data_list.append(r["regret_data"])
         ave_policy_data_list.append(r["ave_policy_data"])
+        if r.get("baseline_data") is not None:
+            baseline_data_list.append(r["baseline_data"])
 
     return {
         "regret_data_list": regret_data_list,
         "ave_policy_data_list": ave_policy_data_list,
+        "baseline_data_list": baseline_data_list,
         "nodes_touched": total_nodes,
     }
 
