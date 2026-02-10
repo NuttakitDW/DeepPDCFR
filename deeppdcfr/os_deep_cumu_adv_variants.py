@@ -44,6 +44,7 @@ class VRDeepDCFRPlus(DeepCumuAdv):
         device="cpu",
         seed=0,
         num_workers=1,
+        evaluate_at_start=True,
     ):
         self.alpha = alpha
         super().__init__(
@@ -76,6 +77,7 @@ class VRDeepDCFRPlus(DeepCumuAdv):
             device,
             seed,
             num_workers,
+            evaluate_at_start,
         )
 
     def init_regret_trainers(self):
@@ -132,6 +134,7 @@ class VRDeepPDCFRPlus(DeepCumuAdv):
         device="cpu",
         seed=0,
         num_workers=1,
+        evaluate_at_start=True,
     ):
         self.alpha = alpha
         self.reinitialize_imm_regret_networks = reinitialize_imm_regret_networks
@@ -165,6 +168,7 @@ class VRDeepPDCFRPlus(DeepCumuAdv):
             device,
             seed,
             num_workers,
+            evaluate_at_start,
         )
 
     def init_regret_trainers(self):
@@ -488,5 +492,4 @@ class VRPDCFRPlusQValueTrainer(QValueTrainer):
 
         self.model.load_state_dict(self.best_model.state_dict())
         return best_loss
-
 

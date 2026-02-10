@@ -53,10 +53,12 @@ class DeepCumuAdv:
         device="cpu",
         seed=0,
         num_workers=1,
+        evaluate_at_start=True,
     ):
         self.game_name = game_name
         self.num_workers = num_workers
         self.play_against_random = play_against_random
+        self.evaluate_at_start = evaluate_at_start
         self.logger = logger or Logger(writer_strings=[])
         self.game = self.load_game()
         self.num_players = self.game.num_players()
@@ -151,7 +153,10 @@ class DeepCumuAdv:
         )
 
     def solve(self):
-        self.evaluate()
+        if self.evaluate_at_start:
+            self.evaluate()
+        else:
+            self.logger.info("skip initial evaluate (evaluate_at_start=false)")
         for _ in range(self.num_iterations):
             self.iteration()
 
@@ -178,10 +183,28 @@ class DeepCumuAdv:
             self._collect_training_data_sequential(player)
 
     def _collect_training_data_sequential(self, player):
-        for _ in range(self.num_traversals):
+        progress_interval = 1000
+        self.logger.info(
+            "collect sequential start | it={} | player={} | traversals={}".format(
+                self.num_iteration, player, self.num_traversals
+            )
+        )
+        for traversal_id in range(1, self.num_traversals + 1):
             self.episode += 1
             root_state = self.skip_chance_state(self.game.new_initial_state())
             self.dfs(root_state, player)
+            if (
+                traversal_id % progress_interval == 0
+                or traversal_id == self.num_traversals
+            ):
+                self.logger.info(
+                    "collect progress | it={} | player={} | traversals={}/{}".format(
+                        self.num_iteration,
+                        player,
+                        traversal_id,
+                        self.num_traversals,
+                    )
+                )
 
     def _collect_training_data_parallel(self, player):
         from deeppdcfr.parallel import run_parallel_dfs, _merge_buffer_data
@@ -205,6 +228,9 @@ class DeepCumuAdv:
             regret_trainers=self.regret_trainers,
             ave_policy_trainer=self.ave_policy_trainer,
             base_seed=self.episode,
+            log_fn=self.logger.info,
+            log_iteration=self.num_iteration,
+            log_player=player,
         )
 
         # Merge regret data into player's buffer

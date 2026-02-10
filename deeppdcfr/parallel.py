@@ -6,7 +6,7 @@ Models are passed as state_dicts and reconstructed in each worker (CPU-only).
 
 import os
 import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 import torch
@@ -117,6 +117,7 @@ def _dfs_worker(args):
     action_size = args["action_size"]
     network_layers = args["network_layers"]
     seed = args["seed"]
+    worker_id = args.get("worker_id", -1)
 
     # Model state dicts (one per player)
     model_states = args["model_states"]
@@ -243,6 +244,8 @@ def _dfs_worker(args):
         dfs(root, player)
 
     return {
+        "worker_id": worker_id,
+        "num_traversals": num_traversals,
         "regret_data": _extract_buffer(regret_buffer),
         "ave_policy_data": _extract_buffer(ave_policy_buffer),
         "nodes_touched": nodes_touched,
@@ -271,6 +274,9 @@ def run_parallel_dfs(
     regret_trainers,
     ave_policy_trainer,
     base_seed,
+    log_fn=None,
+    log_iteration=None,
+    log_player=None,
 ):
     """Divide DFS traversals among workers and collect results."""
     num_players = len(regret_trainers)
@@ -299,6 +305,7 @@ def run_parallel_dfs(
     for w in range(num_workers):
         count = base_count + (1 if w < remainder else 0)
         worker_args.append({
+            "worker_id": w,
             "game_name": game_name,
             "player": player,
             "num_traversals": count,
@@ -319,8 +326,27 @@ def run_parallel_dfs(
         })
 
     ctx = mp.get_context("spawn")
+    results = []
+    merged_traversals = 0
     with ProcessPoolExecutor(max_workers=num_workers, mp_context=ctx) as pool:
-        results = list(pool.map(_dfs_worker, worker_args))
+        futures = [pool.submit(_dfs_worker, arg) for arg in worker_args]
+        for completed_idx, future in enumerate(as_completed(futures), start=1):
+            result = future.result()
+            results.append(result)
+            merged_traversals += int(result["num_traversals"])
+            if log_fn is not None:
+                log_fn(
+                    "collect worker done | it={} | player={} | worker={}/{} | traversals={} | merged_traversals={}/{} | nodes={}".format(
+                        log_iteration if log_iteration is not None else "?",
+                        log_player if log_player is not None else "?",
+                        int(result["worker_id"]) + 1,
+                        num_workers,
+                        int(result["num_traversals"]),
+                        merged_traversals,
+                        num_traversals,
+                        int(result["nodes_touched"]),
+                    )
+                )
 
     # Merge results
     total_nodes = 0

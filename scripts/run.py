@@ -46,6 +46,7 @@ def config():
     num_lbr_samples = 10000
     device = "cpu"
     num_workers = 1
+    evaluate_at_start = True
 
     # baseline
     use_baseline = False
