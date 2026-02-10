@@ -162,3 +162,5 @@ game/*
 .DS_Store
 data.csv
 *.npy
+
+logs/
