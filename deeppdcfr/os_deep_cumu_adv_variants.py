@@ -40,6 +40,7 @@ class VRDeepDCFRPlus(DeepCumuAdv):
         play_against_random=False,
         num_random_games=20000,
         num_lbr_samples=10000,
+        lbr_eval_infer_device="same",
         alpha=1.5,
         device="cpu",
         seed=0,
@@ -74,6 +75,7 @@ class VRDeepDCFRPlus(DeepCumuAdv):
             play_against_random,
             num_random_games,
             num_lbr_samples,
+            lbr_eval_infer_device,
             device,
             seed,
             num_workers,
@@ -131,6 +133,7 @@ class VRDeepPDCFRPlus(DeepCumuAdv):
         play_against_random=False,
         num_random_games=20000,
         num_lbr_samples=10000,
+        lbr_eval_infer_device="same",
         device="cpu",
         seed=0,
         num_workers=1,
@@ -165,6 +168,7 @@ class VRDeepPDCFRPlus(DeepCumuAdv):
             play_against_random,
             num_random_games,
             num_lbr_samples,
+            lbr_eval_infer_device,
             device,
             seed,
             num_workers,
@@ -492,4 +496,3 @@ class VRPDCFRPlusQValueTrainer(QValueTrainer):
 
         self.model.load_state_dict(self.best_model.state_dict())
         return best_loss
-

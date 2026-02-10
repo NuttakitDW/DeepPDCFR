@@ -44,6 +44,7 @@ def config():
     play_against_random = False
     num_random_games = 20000
     num_lbr_samples = 10000
+    lbr_eval_infer_device = "same"  # "same" or "cpu"
     device = "cpu"
     num_workers = 1
     evaluate_at_start = True

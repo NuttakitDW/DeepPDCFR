@@ -1,6 +1,7 @@
 import math
 import os
 import random
+import time
 
 import numpy as np
 
@@ -50,6 +51,7 @@ class DeepCumuAdv:
         play_against_random=False,
         num_random_games=20000,
         num_lbr_samples=10000,
+        lbr_eval_infer_device="same",
         device="cpu",
         seed=0,
         num_workers=1,
@@ -84,6 +86,7 @@ class DeepCumuAdv:
         self.epsilon = epsilon
         self.num_random_games = num_random_games
         self.num_lbr_samples = num_lbr_samples
+        self.lbr_eval_infer_device = lbr_eval_infer_device
         self.fit_advantage = fit_advantage
         self.use_baseline = use_baseline
         self.baseline_buffer_size = baseline_buffer_size
@@ -154,7 +157,13 @@ class DeepCumuAdv:
 
     def solve(self):
         if self.evaluate_at_start:
+            self.logger.info("initial evaluate start")
+            eval_t0 = time.perf_counter()
             self.evaluate()
+            eval_dt_ms = (time.perf_counter() - eval_t0) * 1000.0
+            self.logger.info(
+                "initial evaluate done | dt_ms={:.1f}".format(eval_dt_ms)
+            )
         else:
             self.logger.info("skip initial evaluate (evaluate_at_start=false)")
         for _ in range(self.num_iterations):
@@ -280,9 +289,40 @@ class DeepCumuAdv:
         self.logger.record("episode", self.episode)
         if self.play_against_random:
             if self.poker_game:
+                policy_fn = self.ave_policy_trainer.action_probabilities
+                if (
+                    self.lbr_eval_infer_device == "cpu"
+                    and self.device != "cpu"
+                ):
+                    cpu_model = MLP(
+                        self.ave_policy_trainer.input_size,
+                        self.ave_policy_trainer.network_layers,
+                        self.ave_policy_trainer.output_size,
+                    ).to("cpu")
+                    cpu_model.load_state_dict(self.ave_policy_trainer.model.state_dict())
+                    cpu_model.eval()
+
+                    def policy_fn(s, probs_as_dict=True):
+                        x = torch.as_tensor(
+                            self.ave_policy_trainer.get_infostate_tensor(s),
+                            dtype=torch.float32,
+                            device="cpu",
+                        )
+                        mask = torch.as_tensor(
+                            s.legal_actions_mask(), dtype=torch.float32, device="cpu"
+                        )
+                        with torch.no_grad():
+                            logits = cpu_model(x)
+                            legal_logits = torch.where(mask == 1, logits, -10e20)
+                            policy = self.ave_policy_trainer.softmax_fn(legal_logits)
+                            policy = policy.cpu().numpy()
+                        if probs_as_dict:
+                            return {action: policy[action] for action in s.legal_actions()}
+                        return policy
+
                 lbr_exp = compute_lbr(
                     self.game,
-                    self.ave_policy_trainer.action_probabilities,
+                    policy_fn,
                     self.num_lbr_samples,
                 )
                 self.logger.record("lbr_exp", lbr_exp)
