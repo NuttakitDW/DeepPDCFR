@@ -983,6 +983,71 @@ class QValueTrainer(Trainer):
             reward,
         )
 
+    def _precompute_next_strategies(self, T):
+        """Pre-compute next strategies for all buffer items using regret models.
+
+        Since regret models don't change during baseline training, we compute
+        once and reuse via index lookup — avoids 2+ forward passes per step.
+        """
+        n = len(self.buffer)
+        chunk = max(self.batch_size, 4096)
+        all_strategies = torch.zeros(n, self.output_size, device=self.device)
+
+        with torch.no_grad():
+            for start in range(0, n, chunk):
+                end = min(start + chunk, n)
+                next_states = torch.as_tensor(
+                    self.buffer.next_state_buf[start:end],
+                    dtype=torch.float32, device=self.device,
+                )
+                next_mask = torch.as_tensor(
+                    self.buffer.next_legal_actions_mask_buf[start:end],
+                    dtype=torch.float32, device=self.device,
+                )
+                next_players = torch.as_tensor(
+                    self.buffer.next_player_buf[start:end],
+                    dtype=torch.int64, device=self.device,
+                )
+                strategies = self._compute_strategies_batch(
+                    next_states, next_mask, next_players, T,
+                )
+                all_strategies[start:end] = strategies
+        return all_strategies
+
+    def _compute_strategies_batch(self, next_states, next_mask, next_players, T):
+        """Compute per-item strategy from regret models. Override in subclass."""
+        players_next_stragies = []
+        for player in [0, 1]:
+            p0_regrets = self.regret_trainers[player].predict(
+                self.regret_trainers[player].model, next_states, next_mask,
+            )
+            p0_legal_regrets = p0_regrets * next_mask
+            p0_regrets_pos = torch.clamp(p0_regrets, min=0)
+            p0_regrets_pos_sum = torch.sum(p0_regrets_pos, dim=1, keepdim=True)
+            p0_rm_next_strategies = p0_regrets_pos / p0_regrets_pos_sum
+            _, p0_max_legal_action_id = torch.max(
+                torch.where(
+                    next_mask == 1,
+                    p0_legal_regrets,
+                    torch.tensor(float("-inf"), device=self.device),
+                ),
+                dim=1,
+            )
+            p0_max_next_strategies = F.one_hot(
+                p0_max_legal_action_id, self.output_size
+            )
+            p0_next_strategies = torch.where(
+                p0_regrets_pos_sum == 0,
+                p0_max_next_strategies,
+                p0_rm_next_strategies,
+            )
+            players_next_stragies.append(p0_next_strategies)
+        return torch.where(
+            next_players.unsqueeze(1) == 0,
+            players_next_stragies[0],
+            players_next_stragies[1],
+        )
+
     def train_model(self, T):
         self.model = self.init_model()
         self.target_model = self.init_model()
@@ -990,10 +1055,15 @@ class QValueTrainer(Trainer):
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
         if self.batch_size > 0 and len(self.buffer) < self.batch_size:
             return
+        # Pre-compute strategies once (regret models are frozen during baseline training)
+        all_next_strategies = self._precompute_next_strategies(T)
+
         best_loss = float("inf")
+        patience = 200
+        steps_without_improvement = 0
         self.best_model = self.init_model()
         for train_step in range(self.train_steps + 1):
-            samples = self.buffer.sample(self.batch_size)
+            samples, idxs = self.buffer.sample_with_indices(self.batch_size)
             (
                 histories,
                 next_histories,
@@ -1006,51 +1076,11 @@ class QValueTrainer(Trainer):
             ) = samples
 
             q_values = self.model(histories)  # [B, A]
-            # actions [B]
             q_value = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)  # [B]
 
             with torch.no_grad():
                 next_q_values = self.target_model(next_histories)  # [B, A]
-
-                # calculate next strategies
-                players_next_stragies = []
-                for player in [0, 1]:
-                    p0_regrets = self.regret_trainers[player].predict(
-                        self.regret_trainers[player].model,
-                        next_states,
-                        next_legal_actions_mask,
-                    )  # [B, A]
-                    p0_legal_regrets = p0_regrets * next_legal_actions_mask  # [B, A]
-                    p0_regrets_pos = torch.clamp(p0_regrets, min=0)  # [B, A]
-                    p0_regrets_pos_sum = torch.sum(
-                        p0_regrets_pos, dim=1, keepdim=True
-                    )  # [B, 1]
-                    p0_rm_next_strategies = (
-                        p0_regrets_pos / p0_regrets_pos_sum
-                    )  # [B, A]
-                    _, p0_max_legal_action_id = torch.max(
-                        torch.where(
-                            next_legal_actions_mask == 1,
-                            p0_legal_regrets,
-                            torch.tensor(float("-inf"), device=self.device),
-                        ),
-                        dim=1,
-                    )  # [B]
-                    p0_max_next_strategies = F.one_hot(
-                        p0_max_legal_action_id, self.output_size
-                    )  # [B, A]
-                    p0_next_strategies = torch.where(
-                        p0_regrets_pos_sum == 0,
-                        p0_max_next_strategies,
-                        p0_rm_next_strategies,
-                    )  # [B, A]
-                    players_next_stragies.append(p0_next_strategies)
-
-                next_strategies = torch.where(
-                    next_players.unsqueeze(1) == 0,
-                    players_next_stragies[0],
-                    players_next_stragies[1],
-                )
+                next_strategies = all_next_strategies[idxs]  # [B, A]
 
             target = rewards + (1 - dones) * torch.sum(
                 next_q_values * next_strategies, dim=1, keepdim=False
@@ -1060,22 +1090,33 @@ class QValueTrainer(Trainer):
 
             self.optimizer.zero_grad()
             loss.backward()
-            # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
             self.optimizer.step()
 
             if train_step % 50 == 0:
                 self.target_model.load_state_dict(self.model.state_dict())
 
-            if loss.item() < best_loss:
-                best_loss = loss.item()
+            current_loss = loss.item()
+            if current_loss < best_loss:
+                best_loss = current_loss
                 self.best_model.load_state_dict(self.model.state_dict())
+                steps_without_improvement = 0
+            else:
+                steps_without_improvement += 1
 
             if train_step % 100 == 0:
                 print(
                     "train_step[{}/{}]: loss {}, best_loss {}".format(
-                        train_step, self.train_steps, loss.item(), best_loss
+                        train_step, self.train_steps, current_loss, best_loss
                     )
                 )
+
+            if steps_without_improvement >= patience:
+                print(
+                    "early stop at step {}/{}: best_loss {}".format(
+                        train_step, self.train_steps, best_loss
+                    )
+                )
+                break
 
         self.model.load_state_dict(self.best_model.state_dict())
         return best_loss
@@ -1181,6 +1222,30 @@ class CircularBuffer:
             *map(self.numpy_to_int_tensor, int_data),
         )
         return data_tensor
+
+    def sample_with_indices(self, num_samples=-1):
+        data_length = len(self)
+        if num_samples == -1:
+            idxs = list(range(data_length))
+        else:
+            idxs = random.sample(range(data_length), num_samples)
+        float_data = (
+            self.history_buf[idxs],
+            self.next_history_buf[idxs],
+            self.next_state_buf[idxs],
+            self.reward_buf[idxs],
+        )
+        int_data = (
+            self.next_legal_actions_mask_buf[idxs],
+            self.next_player_buf[idxs],
+            self.action_buf[idxs],
+            self.done_buf[idxs],
+        )
+        data_tensor = (
+            *map(self.numpy_to_float_tensor, float_data),
+            *map(self.numpy_to_int_tensor, int_data),
+        )
+        return data_tensor, idxs
 
     def numpy_to_float_tensor(self, data):
         return torch.as_tensor(data, dtype=torch.float32, device=self.device)

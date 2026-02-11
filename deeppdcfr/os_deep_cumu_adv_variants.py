@@ -385,114 +385,44 @@ class VRPDCFRPlusRegretTrainer(RegretTrainer):
 
 
 class VRPDCFRPlusQValueTrainer(QValueTrainer):
-    def train_model(self, T):
-        self.model = self.init_model()
-        self.target_model = self.init_model()
-        self.target_model.load_state_dict(self.model.state_dict())
-        self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-        if self.batch_size > 0 and len(self.buffer) < self.batch_size:
-            return
-        best_loss = float("inf")
-        self.best_model = self.init_model()
-        for train_step in range(self.train_steps + 1):
-            samples = self.buffer.sample(self.batch_size)
-            (
-                histories,
-                next_histories,
-                next_states,
-                rewards,
-                next_legal_actions_mask,
-                next_players,
-                actions,
-                dones,
-            ) = samples
-
-            q_values = self.model(histories)  # [B, A]
-            # actions [B]
-            q_value = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)  # [B]
-
-            with torch.no_grad():
-                next_q_values = self.target_model(next_histories)  # [B, A]
-
-                # calculate next strategies
-                players_next_stragies = []
-                for player in [0, 1]:
-                    p0_regrets = self.regret_trainers[player].predict(
-                        self.regret_trainers[player].model,
-                        next_states,
-                        next_legal_actions_mask,
-                    )  # [B, A]
-                    alpha = self.regret_trainers[player].alpha
-                    p0_imm_regrets = self.regret_trainers[player].predict(
-                        self.regret_trainers[player].imm_model,
-                        next_states,
-                        next_legal_actions_mask,
-                    )  # [B, A]
-                    p0_pred_regrets = torch.clamp(
-                        torch.clamp(p0_regrets, min=0)
-                        * np.power(T, alpha)
-                        / (np.power(T, alpha) + 1)
-                        + p0_imm_regrets,
-                        min=0,
-                    )
-                    p0_regrets = p0_pred_regrets
-
-                    p0_legal_regrets = p0_regrets * next_legal_actions_mask  # [B, A]
-                    p0_regrets_pos = torch.clamp(p0_regrets, min=0)  # [B, A]
-                    p0_regrets_pos_sum = torch.sum(
-                        p0_regrets_pos, dim=1, keepdim=True
-                    )  # [B, 1]
-                    p0_rm_next_strategies = (
-                        p0_regrets_pos / p0_regrets_pos_sum
-                    )  # [B, A]
-                    _, p0_max_legal_action_id = torch.max(
-                        torch.where(
-                            next_legal_actions_mask == 1,
-                            p0_legal_regrets,
-                            torch.tensor(float("-inf"), device=self.device),
-                        ),
-                        dim=1,
-                    )  # [B]
-                    p0_max_next_strategies = F.one_hot(
-                        p0_max_legal_action_id, self.output_size
-                    )  # [B, A]
-                    p0_next_strategies = torch.where(
-                        p0_regrets_pos_sum == 0,
-                        p0_max_next_strategies,
-                        p0_rm_next_strategies,
-                    )  # [B, A]
-                    players_next_stragies.append(p0_next_strategies)
-
-                next_strategies = torch.where(
-                    next_players.unsqueeze(1) == 0,
-                    players_next_stragies[0],
-                    players_next_stragies[1],
-                )
-
-            target = rewards + (1 - dones) * torch.sum(
-                next_q_values * next_strategies, dim=1, keepdim=False
+    def _compute_strategies_batch(self, next_states, next_mask, next_players, T):
+        """Override: use predictive regret matching with imm_model."""
+        players_next_stragies = []
+        for player in [0, 1]:
+            rt = self.regret_trainers[player]
+            p0_regrets = rt.predict(rt.model, next_states, next_mask)
+            alpha = rt.alpha
+            p0_imm_regrets = rt.predict(rt.imm_model, next_states, next_mask)
+            p0_regrets = torch.clamp(
+                torch.clamp(p0_regrets, min=0)
+                * np.power(T, alpha)
+                / (np.power(T, alpha) + 1)
+                + p0_imm_regrets,
+                min=0,
             )
-
-            loss = self.loss_fn(q_value, target)
-
-            self.optimizer.zero_grad()
-            loss.backward()
-            # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
-            self.optimizer.step()
-
-            if train_step % 50 == 0:
-                self.target_model.load_state_dict(self.model.state_dict())
-
-            if loss.item() < best_loss:
-                best_loss = loss.item()
-                self.best_model.load_state_dict(self.model.state_dict())
-
-            if train_step % 100 == 0:
-                print(
-                    "train_step[{}/{}]: loss {}, best_loss {}".format(
-                        train_step, self.train_steps, loss.item(), best_loss
-                    )
-                )
-
-        self.model.load_state_dict(self.best_model.state_dict())
-        return best_loss
+            p0_legal_regrets = p0_regrets * next_mask
+            p0_regrets_pos = torch.clamp(p0_regrets, min=0)
+            p0_regrets_pos_sum = torch.sum(p0_regrets_pos, dim=1, keepdim=True)
+            p0_rm_next_strategies = p0_regrets_pos / p0_regrets_pos_sum
+            _, p0_max_legal_action_id = torch.max(
+                torch.where(
+                    next_mask == 1,
+                    p0_legal_regrets,
+                    torch.tensor(float("-inf"), device=self.device),
+                ),
+                dim=1,
+            )
+            p0_max_next_strategies = F.one_hot(
+                p0_max_legal_action_id, self.output_size
+            )
+            p0_next_strategies = torch.where(
+                p0_regrets_pos_sum == 0,
+                p0_max_next_strategies,
+                p0_rm_next_strategies,
+            )
+            players_next_stragies.append(p0_next_strategies)
+        return torch.where(
+            next_players.unsqueeze(1) == 0,
+            players_next_stragies[0],
+            players_next_stragies[1],
+        )
