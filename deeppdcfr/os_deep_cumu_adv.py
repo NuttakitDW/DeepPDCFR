@@ -1104,15 +1104,15 @@ class QValueTrainer(Trainer):
                 steps_without_improvement += 1
 
             if train_step % 100 == 0:
-                print(
-                    "train_step[{}/{}]: loss {}, best_loss {}".format(
+                self.logger.info(
+                    "[{}/{}] baseline loss: {} (best: {})".format(
                         train_step, self.train_steps, current_loss, best_loss
                     )
                 )
 
             if steps_without_improvement >= patience:
-                print(
-                    "early stop at step {}/{}: best_loss {}".format(
+                self.logger.info(
+                    "early stop baseline at step {}/{}: best_loss {}".format(
                         train_step, self.train_steps, best_loss
                     )
                 )
