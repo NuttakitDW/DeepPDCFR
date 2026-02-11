@@ -42,7 +42,7 @@
       ]
     ]
   },
-  "heartbeat": "2026-02-10T06:46:43.872994",
+  "heartbeat": "2026-02-10T14:08:19.798341",
   "host": {
     "ENV": {},
     "cpu": "Intel(R) Xeon(R) Platinum 8488C",
@@ -94,5 +94,6 @@
   "resources": [],
   "result": null,
   "start_time": "2026-02-10T05:40:43.305605",
-  "status": "RUNNING"
+  "status": "INTERRUPTED",
+  "stop_time": "2026-02-10T14:08:19.799407"
 }
