@@ -3,9 +3,9 @@ import os
 # Allow PyTorch to use multiple threads during training.
 # Workers set DEEPPDCFR_WORKER=1 and run single-threaded numpy,
 # so this only affects the main process training loop.
-os.environ["OPENBLAS_NUM_THREADS"] = os.environ.get("OPENBLAS_NUM_THREADS", "8")
-os.environ["MKL_NUM_THREADS"] = os.environ.get("MKL_NUM_THREADS", "8")
-os.environ["OMP_NUM_THREADS"] = os.environ.get("OMP_NUM_THREADS", "8")
+os.environ["OPENBLAS_NUM_THREADS"] = os.environ.get("OPENBLAS_NUM_THREADS", "1")
+os.environ["MKL_NUM_THREADS"] = os.environ.get("MKL_NUM_THREADS", "1")
+os.environ["OMP_NUM_THREADS"] = os.environ.get("OMP_NUM_THREADS", "1")
 
 from pathlib import Path
 
@@ -49,6 +49,10 @@ def config():
     num_workers = 1
     evaluate_at_start = True
 
+    # resume
+    resume = False
+    resume_path = ""
+
     # baseline
     use_baseline = False
     baseline_buffer_size = 1000000
@@ -64,6 +68,15 @@ def config():
         ex.observers.append(ServerFileStorageObserver(folder))
 
 
+def find_latest_checkpoint(folder):
+    """Find the most recently modified latest.pt under a log folder."""
+    candidates = sorted(
+        folder.glob("*/checkpoints/latest.pt"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    return candidates[-1] if candidates else None
+
+
 @ex.automain
 def main(algo_name, _config, _run):
     configs = dict(_config)
@@ -73,4 +86,19 @@ def main(algo_name, _config, _run):
     solver_class = load_module("deeppdcfr:{}".format(algo_name))
 
     solver = init_object(solver_class, configs, logger=logger)
+
+    # Resume from checkpoint
+    resume = configs.get("resume", False)
+    resume_path = configs.get("resume_path", "")
+    if resume:
+        log_dir = Path(__file__).parents[1] / configs["log_folder"] / algo_name / configs["game_name"]
+        if resume_path:
+            ckpt_path = Path(resume_path)
+        else:
+            ckpt_path = find_latest_checkpoint(log_dir)
+        if ckpt_path and ckpt_path.exists():
+            solver.load_checkpoint(ckpt_path)
+        else:
+            logger.warn(f"Resume requested but no checkpoint found (searched {log_dir}). Starting fresh.")
+
     solver.solve()

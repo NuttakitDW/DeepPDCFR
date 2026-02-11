@@ -156,17 +156,26 @@ class DeepCumuAdv:
         )
 
     def solve(self):
-        if self.evaluate_at_start:
-            self.logger.info("initial evaluate start")
-            eval_t0 = time.perf_counter()
-            self.evaluate()
-            eval_dt_ms = (time.perf_counter() - eval_t0) * 1000.0
+        resumed = getattr(self, '_resumed', False)
+        remaining = self.num_iterations - self.num_iteration
+        if resumed:
             self.logger.info(
-                "initial evaluate done | dt_ms={:.1f}".format(eval_dt_ms)
+                f"Resumed: skipping {self.num_iteration} completed iterations, "
+                f"{remaining} remaining"
             )
         else:
-            self.logger.info("skip initial evaluate (evaluate_at_start=false)")
-        for _ in range(self.num_iterations):
+            if self.evaluate_at_start:
+                self.logger.info("initial evaluate start")
+                eval_t0 = time.perf_counter()
+                self.evaluate()
+                eval_dt_ms = (time.perf_counter() - eval_t0) * 1000.0
+                self.logger.info(
+                    "initial evaluate done | dt_ms={:.1f}".format(eval_dt_ms)
+                )
+            else:
+                self.logger.info("skip initial evaluate (evaluate_at_start=false)")
+            remaining = self.num_iterations
+        for _ in range(remaining):
             self.iteration()
 
     def iteration(self):
@@ -216,6 +225,7 @@ class DeepCumuAdv:
                 )
 
     def _collect_training_data_parallel(self, player):
+        self._set_dfs_threads()
         from deeppdcfr.parallel import (
             run_parallel_dfs,
             _merge_buffer_data,
@@ -268,17 +278,20 @@ class DeepCumuAdv:
         self.logger.info(f"Parallel DFS done: {result['nodes_touched']} nodes touched")
 
     def train_regret(self, player):
+        self._set_training_threads()
         if self.reinitialize_advantage_networks:
             self.regret_trainers[player].reset()
         regret_loss = self.regret_trainers[player].train_model(self.num_iteration)
         self.logger.record("regret_loss_{}".format(player), regret_loss)
 
     def train_baseline(self, player):
+        self._set_training_threads()
         baseline_loss = self.q_value_trainer.train_model(self.num_iteration)
         if baseline_loss is not None:
             self.logger.record("baseline_loss_{}".format(player), baseline_loss)
 
     def train_average_policy(self):
+        self._set_training_threads()
         self.ave_policy_trainer.reset()
         ave_policy_loss = self.ave_policy_trainer.train_model(self.num_iteration)
         self.logger.info("average policy loss: {}".format(ave_policy_loss))
@@ -357,8 +370,11 @@ class DeepCumuAdv:
         for i, rt in enumerate(self.regret_trainers):
             checkpoint[f'regret_model_{i}'] = rt.model.state_dict()
             checkpoint[f'regret_target_model_{i}'] = rt.target_model.state_dict()
+            checkpoint[f'regret_optimizer_{i}'] = rt.optimizer.state_dict()
             if hasattr(rt, 'imm_model'):
                 checkpoint[f'regret_imm_model_{i}'] = rt.imm_model.state_dict()
+            if hasattr(rt, 'imm_optimizer'):
+                checkpoint[f'regret_imm_optimizer_{i}'] = rt.imm_optimizer.state_dict()
         if self.use_baseline:
             checkpoint['baseline_model'] = self.q_value_trainer.model.state_dict()
 
@@ -371,6 +387,42 @@ class DeepCumuAdv:
         os.replace(tmp, latest)
 
         self.logger.info(f"Saved checkpoint to {path}")
+
+    def load_checkpoint(self, path):
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+
+        # Restore counters
+        self.num_iteration = checkpoint['num_iteration']
+        self.episode = checkpoint['episode']
+        self.nodes_touched = checkpoint['nodes_touched']
+        self.logger.info(
+            f"Resuming from {path} | iteration={self.num_iteration} "
+            f"episode={self.episode} nodes_touched={self.nodes_touched}"
+        )
+
+        # Restore ave_policy model
+        self.ave_policy_trainer.model.load_state_dict(checkpoint['ave_policy_model'])
+
+        # Restore regret models + optimizers
+        for i, rt in enumerate(self.regret_trainers):
+            rt.model.load_state_dict(checkpoint[f'regret_model_{i}'])
+            rt.target_model.load_state_dict(checkpoint[f'regret_target_model_{i}'])
+            if hasattr(rt, 'imm_model') and f'regret_imm_model_{i}' in checkpoint:
+                rt.imm_model.load_state_dict(checkpoint[f'regret_imm_model_{i}'])
+            # Optimizer states (may be absent in old checkpoints)
+            try:
+                if f'regret_optimizer_{i}' in checkpoint:
+                    rt.optimizer.load_state_dict(checkpoint[f'regret_optimizer_{i}'])
+                if hasattr(rt, 'imm_optimizer') and f'regret_imm_optimizer_{i}' in checkpoint:
+                    rt.imm_optimizer.load_state_dict(checkpoint[f'regret_imm_optimizer_{i}'])
+            except Exception as e:
+                self.logger.warn(f"Could not restore optimizer state for player {i}: {e}")
+
+        # Restore baseline model
+        if self.use_baseline and 'baseline_model' in checkpoint:
+            self.q_value_trainer.model.load_state_dict(checkpoint['baseline_model'])
+
+        self._resumed = True
 
     def dfs(
         self,
@@ -479,6 +531,14 @@ class DeepCumuAdv:
 
         game = game_config.load_game()
         return game
+
+    def _set_training_threads(self):
+        """Use all cores for training (one thread per worker core)."""
+        torch.set_num_threads(max(self.num_workers, 1))
+
+    def _set_dfs_threads(self):
+        """Use 1 thread in main process during DFS (workers handle parallelism)."""
+        torch.set_num_threads(1)
 
     def skip_chance_state(self, s):
         while s.current_player() == -1:

@@ -9,7 +9,6 @@ import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
-import torch
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +44,7 @@ def _predictive_regret_matching(regrets, imm_regrets, legal_actions, T, alpha, u
 
 def _model_forward(model, x, mask):
     """Run model inference and return numpy array of masked outputs."""
+    import torch
     x = torch.as_tensor(x, dtype=torch.float32)
     mask = torch.as_tensor(mask, dtype=torch.float32)
     with torch.no_grad():
@@ -77,16 +77,78 @@ def _extract_buffer(buf):
 
 
 def _merge_buffer_data(target_buffer, worker_data_list):
-    """Merge extracted buffer data from workers into target_buffer."""
-    for data in worker_data_list:
-        n = len(data["infostates"])
-        for i in range(n):
-            target_buffer.add(
-                data["infostates"][i],
-                data["q_values"][i],
-                data["q_value_masks"][i],
-                data["iterations"][i].item(),
-            )
+    """Merge extracted buffer data from workers into target_buffer using bulk numpy ops."""
+    if not worker_data_list:
+        return
+    # Concat all worker data into single arrays
+    all_infostates = np.concatenate([d["infostates"] for d in worker_data_list], axis=0)
+    all_q_values = np.concatenate([d["q_values"] for d in worker_data_list], axis=0)
+    all_q_value_masks = np.concatenate([d["q_value_masks"] for d in worker_data_list], axis=0)
+    all_iterations = np.concatenate([d["iterations"] for d in worker_data_list], axis=0)
+    total_new = len(all_infostates)
+    if total_new == 0:
+        return
+
+    buf = target_buffer
+    buf_size = buf.buffer_size
+    cur = buf.cur_id  # how many items have been seen so far
+
+    if cur == 0 and total_new <= buf_size:
+        # Buffer empty and all data fits: direct copy
+        buf.infostate_buf[:total_new] = all_infostates
+        buf.q_value_buf[:total_new] = all_q_values
+        buf.q_value_mask_buf[:total_new] = all_q_value_masks
+        buf.iteration_buf[:total_new] = all_iterations
+        buf.cur_id = total_new
+    elif cur == 0 and total_new > buf_size:
+        # Buffer empty but data exceeds capacity: reservoir sample from the batch
+        # First buf_size items go in directly
+        buf.infostate_buf[:] = all_infostates[:buf_size]
+        buf.q_value_buf[:] = all_q_values[:buf_size]
+        buf.q_value_mask_buf[:] = all_q_value_masks[:buf_size]
+        buf.iteration_buf[:] = all_iterations[:buf_size]
+        # Remaining items: reservoir sampling
+        for i in range(buf_size, total_new):
+            j = np.random.randint(0, i + 1)
+            if j < buf_size:
+                buf.infostate_buf[j] = all_infostates[i]
+                buf.q_value_buf[j] = all_q_values[i]
+                buf.q_value_mask_buf[j] = all_q_value_masks[i]
+                buf.iteration_buf[j] = all_iterations[i]
+        buf.cur_id = total_new
+    else:
+        # Buffer already has data: continue reservoir sampling
+        # Items that would fall in [cur, cur+total_new) range
+        remaining_capacity = buf_size - min(cur, buf_size)
+        if remaining_capacity > 0:
+            # Fill remaining slots directly
+            direct_count = min(remaining_capacity, total_new)
+            start_idx = min(cur, buf_size)
+            buf.infostate_buf[start_idx:start_idx + direct_count] = all_infostates[:direct_count]
+            buf.q_value_buf[start_idx:start_idx + direct_count] = all_q_values[:direct_count]
+            buf.q_value_mask_buf[start_idx:start_idx + direct_count] = all_q_value_masks[:direct_count]
+            buf.iteration_buf[start_idx:start_idx + direct_count] = all_iterations[:direct_count]
+            reservoir_start = direct_count
+        else:
+            reservoir_start = 0
+
+        # Vectorized reservoir sampling for remaining items
+        if reservoir_start < total_new:
+            n_reservoir = total_new - reservoir_start
+            # For item at logical position (cur + reservoir_start + k), sample j in [0, cur + reservoir_start + k]
+            positions = np.arange(reservoir_start, total_new) + cur
+            rand_indices = np.array([np.random.randint(0, pos + 1) for pos in positions])
+            accept_mask = rand_indices < buf_size
+            accepted_indices = np.where(accept_mask)[0]
+            if len(accepted_indices) > 0:
+                src_indices = accepted_indices + reservoir_start
+                dst_indices = rand_indices[accepted_indices]
+                buf.infostate_buf[dst_indices] = all_infostates[src_indices]
+                buf.q_value_buf[dst_indices] = all_q_values[src_indices]
+                buf.q_value_mask_buf[dst_indices] = all_q_value_masks[src_indices]
+                buf.iteration_buf[dst_indices] = all_iterations[src_indices]
+
+        buf.cur_id = cur + total_new
 
 
 def _extract_circular_buffer(buf):
@@ -105,20 +167,38 @@ def _extract_circular_buffer(buf):
 
 
 def _merge_circular_buffer_data(target_buffer, worker_data_list):
-    """Merge extracted CircularBuffer data from workers into target buffer."""
-    for data in worker_data_list:
-        n = len(data["history"])
-        for i in range(n):
-            target_buffer.add(
-                data["history"][i],
-                int(data["action"][i]),
-                data["next_history"][i],
-                data["next_state"][i],
-                data["next_legal_actions_mask"][i],
-                int(data["next_player"][i]),
-                int(data["done"][i]),
-                float(data["reward"][i]),
-            )
+    """Merge extracted CircularBuffer data from workers using bulk numpy ops."""
+    if not worker_data_list:
+        return
+    all_history = np.concatenate([d["history"] for d in worker_data_list], axis=0)
+    all_action = np.concatenate([d["action"] for d in worker_data_list], axis=0)
+    all_next_history = np.concatenate([d["next_history"] for d in worker_data_list], axis=0)
+    all_next_state = np.concatenate([d["next_state"] for d in worker_data_list], axis=0)
+    all_next_lam = np.concatenate([d["next_legal_actions_mask"] for d in worker_data_list], axis=0)
+    all_next_player = np.concatenate([d["next_player"] for d in worker_data_list], axis=0)
+    all_done = np.concatenate([d["done"] for d in worker_data_list], axis=0)
+    all_reward = np.concatenate([d["reward"] for d in worker_data_list], axis=0)
+    total_new = len(all_history)
+    if total_new == 0:
+        return
+
+    buf = target_buffer
+    buf_size = buf.buffer_size
+    cur = buf.cur_id  # current write position (wraps around)
+
+    # Compute destination indices (circular)
+    dst_indices = np.arange(total_new) + cur
+    dst_indices = dst_indices % buf_size
+
+    buf.history_buf[dst_indices] = all_history
+    buf.action_buf[dst_indices] = all_action
+    buf.next_history_buf[dst_indices] = all_next_history
+    buf.next_state_buf[dst_indices] = all_next_state
+    buf.next_legal_actions_mask_buf[dst_indices] = all_next_lam
+    buf.next_player_buf[dst_indices] = all_next_player
+    buf.done_buf[dst_indices] = all_done
+    buf.reward_buf[dst_indices] = all_reward
+    buf.cur_id = cur + total_new
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +214,8 @@ def _dfs_worker(args):
     os.environ["OMP_NUM_THREADS"] = "1"
     os.environ["MKL_NUM_THREADS"] = "1"
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    import torch
+    torch.set_num_threads(1)
     from deeppdcfr.game import read_game_config
     from deeppdcfr.os_deep_cumu_adv import ReservoirBuffer, CircularBuffer
 
@@ -467,6 +549,8 @@ def _lbr_worker(args):
     os.environ["OMP_NUM_THREADS"] = "1"
     os.environ["MKL_NUM_THREADS"] = "1"
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    import torch
+    torch.set_num_threads(1)
     from deeppdcfr.game import read_game_config
 
     game_name = args["game_name"]
