@@ -241,9 +241,9 @@ def _dfs_worker(args):
     use_baseline = bool(args.get("use_baseline", False))
     q_model_state = args.get("q_model_state")
 
-    # Worker buffers: sized to actual workload, not full config size.
-    # Each traversal produces ~100 entries max (generous upper bound for FHP).
-    worker_buffer_size = num_traversals * 100
+    # Worker buffers are capped by a per-worker budget from the parent process.
+    # This avoids quadratic RAM growth when num_workers or num_traversals is high.
+    worker_buffer_size = int(args.get("worker_buffer_size", num_traversals * 32))
 
     # Seed this worker's RNG
     np.random.seed(seed)
@@ -470,14 +470,24 @@ def run_parallel_dfs(
     # Divide traversals among workers
     base_count = num_traversals // num_workers
     remainder = num_traversals % num_workers
+    max_global_buffer = max(advantage_buffer_size, ave_policy_buffer_size)
+    if use_baseline and q_value_trainer is not None:
+        max_global_buffer = max(max_global_buffer, q_value_trainer.buffer.buffer_size)
+    min_worker_buffer = 4096
+    per_worker_cap = max(min_worker_buffer, max_global_buffer // max(num_workers, 1))
     worker_args = []
     for w in range(num_workers):
         count = base_count + (1 if w < remainder else 0)
+        worker_buffer_size = max(
+            min_worker_buffer,
+            min(count * 32, per_worker_cap * 2),
+        )
         worker_args.append({
             "worker_id": w,
             "game_name": game_name,
             "player": player,
             "num_traversals": count,
+            "worker_buffer_size": worker_buffer_size,
             "num_iteration": num_iteration,
             "epsilon": epsilon,
             "fit_advantage": fit_advantage,
