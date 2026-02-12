@@ -780,18 +780,19 @@ class ReservoirBuffer:
 
     def reset(self):
         if hasattr(self, "cur_id"):
-            print(self.cur_id)
             self.cur_id = 0
             return
 
-        self.infostate_buf = np.ones(
-            [self.buffer_size, self.infostate_size], dtype=float
+        self.infostate_buf = np.empty(
+            [self.buffer_size, self.infostate_size], dtype=np.float32
         )
-        self.q_value_buf = np.ones([self.buffer_size, self.action_size], dtype=float)
-        self.q_value_mask_buf = np.ones(
-            [self.buffer_size, self.action_size], dtype=float
+        self.q_value_buf = np.empty(
+            [self.buffer_size, self.action_size], dtype=np.float32
         )
-        self.iteration_buf = np.ones([self.buffer_size, 1], dtype=float)
+        self.q_value_mask_buf = np.empty(
+            [self.buffer_size, self.action_size], dtype=np.uint8
+        )
+        self.iteration_buf = np.empty([self.buffer_size, 1], dtype=np.int32)
         self.cur_id = 0
 
     def add(self, infostate, q_value, q_value_mask, iteration):
@@ -953,7 +954,7 @@ class QValueTrainer(Trainer):
         history_tensor = self.get_history_tensor(s)
         coef = 1 if player == 0 else -1
         baseline = self.forward(history_tensor) * coef
-        baseline = baseline * np.array(s.legal_actions_mask(), dtype=float)
+        baseline = baseline * np.array(s.legal_actions_mask(), dtype=np.float32)
         # baseline =  np.zeros(s.num_distinct_actions(), dtype=float)
         return baseline
 
@@ -969,8 +970,8 @@ class QValueTrainer(Trainer):
         reward,
     ):
         if done:
-            next_state = np.zeros([self.state_size], dtype=float)
-            next_legal_actions_mask = np.zeros([self.output_size], dtype=int)
+            next_state = np.zeros([self.state_size], dtype=np.float32)
+            next_legal_actions_mask = np.zeros([self.output_size], dtype=np.uint8)
             next_player = 0
         self.buffer.add(
             history,
@@ -1140,18 +1141,22 @@ class CircularBuffer:
         self.reset()
 
     def reset(self):
-        self.history_buf = np.ones([self.buffer_size, self.history_size], dtype=float)
-        self.action_buf = np.ones([self.buffer_size], dtype=int)
-        self.next_history_buf = np.ones(
-            [self.buffer_size, self.history_size], dtype=float
+        self.history_buf = np.empty(
+            [self.buffer_size, self.history_size], dtype=np.float32
         )
-        self.next_state_buf = np.ones([self.buffer_size, self.state_size], dtype=float)
-        self.next_legal_actions_mask_buf = np.ones(
-            [self.buffer_size, self.action_size], dtype=int
+        self.action_buf = np.empty([self.buffer_size], dtype=np.int32)
+        self.next_history_buf = np.empty(
+            [self.buffer_size, self.history_size], dtype=np.float32
         )
-        self.next_player_buf = np.ones([self.buffer_size], dtype=int)
-        self.done_buf = np.ones([self.buffer_size], dtype=int)
-        self.reward_buf = np.ones([self.buffer_size], dtype=float)
+        self.next_state_buf = np.empty(
+            [self.buffer_size, self.state_size], dtype=np.float32
+        )
+        self.next_legal_actions_mask_buf = np.empty(
+            [self.buffer_size, self.action_size], dtype=np.uint8
+        )
+        self.next_player_buf = np.empty([self.buffer_size], dtype=np.int8)
+        self.done_buf = np.empty([self.buffer_size], dtype=np.int8)
+        self.reward_buf = np.empty([self.buffer_size], dtype=np.float32)
         self.cur_id = 0
 
     def add(
