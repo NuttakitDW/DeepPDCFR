@@ -10,7 +10,23 @@ from pathlib import Path
 
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from deeppdcfr.game import read_game_config
+
 LOGS_ROOT = Path(__file__).resolve().parent.parent / "logs"
+
+
+def get_big_blind(game_name):
+    """Get the big blind size in chips for a poker game."""
+    try:
+        game_config = read_game_config(game_name)
+        blind_str = game_config.params.get("blind")
+        if blind_str:
+            # Big blind is the last (largest) value
+            return max(int(b) for b in blind_str.split())
+    except Exception:
+        pass
+    return None
 
 
 def find_latest_run(algo=None, game=None):
@@ -161,12 +177,23 @@ def main():
     print(f"  {'Progress:':<18}{progress:>9.1f}%")
     print(f"  {chr(0x2500) * W}")
 
+    big_blind = get_big_blind(game_name)
+
     if cur_exp is not None:
-        print(f"  {'Exploitability:':<18}{cur_exp:>10.2f}  ({get_exp_label(exp_key)})")
-        print(f"  {'Best exploit:':<18}{best_exp:>10.2f}  (iter {best_exp_iter})")
-        if len(trend_values) >= 2:
-            trend_str = " -> ".join(f"{v:.1f}" for v in trend_values)
-            print(f"  {'Recent trend:':<18}{trend_str}")
+        if big_blind:
+            cur_bb100 = cur_exp / big_blind * 100
+            best_bb100 = best_exp / big_blind * 100
+            print(f"  {'Exploitability:':<18}{cur_bb100:>9.2f} bb/100  ({get_exp_label(exp_key)})")
+            print(f"  {'Best exploit:':<18}{best_bb100:>9.2f} bb/100  (iter {best_exp_iter})")
+            if len(trend_values) >= 2:
+                trend_str = " -> ".join(f"{v/big_blind*100:.2f}" for v in trend_values)
+                print(f"  {'Recent trend:':<18}{trend_str}")
+        else:
+            print(f"  {'Exploitability:':<18}{cur_exp:>10.2f}  ({get_exp_label(exp_key)})")
+            print(f"  {'Best exploit:':<18}{best_exp:>10.2f}  (iter {best_exp_iter})")
+            if len(trend_values) >= 2:
+                trend_str = " -> ".join(f"{v:.1f}" for v in trend_values)
+                print(f"  {'Recent trend:':<18}{trend_str}")
         print(f"  {chr(0x2500) * W}")
 
     if elapsed:
