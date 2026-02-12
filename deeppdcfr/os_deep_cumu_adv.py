@@ -47,6 +47,7 @@ class DeepCumuAdv:
         baseline_buffer_size=100_0000,
         baseline_batch_size=-1,
         baseline_network_train_steps=1,
+        disable_baseline_early_stop=False,
         gamma=0,
         play_against_random=False,
         num_random_games=20000,
@@ -92,6 +93,7 @@ class DeepCumuAdv:
         self.baseline_buffer_size = baseline_buffer_size
         self.baseline_network_train_steps = baseline_network_train_steps
         self.baseline_batch_size = baseline_batch_size
+        self.disable_baseline_early_stop = disable_baseline_early_stop
         self.num_iteration = 0
         self.nodes_touched = 0
         self.episode = 0
@@ -150,6 +152,7 @@ class DeepCumuAdv:
             self.baseline_buffer_size,
             self.baseline_batch_size,
             self.baseline_network_train_steps,
+            self.disable_baseline_early_stop,
             self.logger,
             self.regret_trainers,
             self.device,
@@ -915,6 +918,7 @@ class QValueTrainer(Trainer):
         buffer_size: int,
         batch_size: int,
         train_steps: int,
+        disable_early_stop: bool,
         logger: Logger,
         regret_trainers: list[RegretTrainer],
         device: str = "cpu",
@@ -930,6 +934,7 @@ class QValueTrainer(Trainer):
             logger,
             device,
         )
+        self.disable_early_stop = disable_early_stop
         self.state_size = state_size
         self.buffer = CircularBuffer(
             self.buffer_size,
@@ -1111,7 +1116,7 @@ class QValueTrainer(Trainer):
                     )
                 )
 
-            if steps_without_improvement >= patience:
+            if (not self.disable_early_stop) and steps_without_improvement >= patience:
                 self.logger.info(
                     "early stop baseline at step {}/{}: best_loss {}".format(
                         train_step, self.train_steps, best_loss

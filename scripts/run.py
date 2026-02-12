@@ -58,6 +58,7 @@ def config():
     baseline_buffer_size = 1000000
     baseline_batch_size = 2048
     baseline_network_train_steps = 1000
+    disable_baseline_early_stop = False
 
     # logger
     writer_strings = ["stdout"]
