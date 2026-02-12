@@ -506,7 +506,7 @@ def run_parallel_dfs(
             "seed": base_seed + w,
         })
 
-    ctx = mp.get_context("spawn")
+    ctx = mp.get_context("fork")
     results = []
     merged_traversals = 0
     with ProcessPoolExecutor(max_workers=num_workers, mp_context=ctx) as pool:
