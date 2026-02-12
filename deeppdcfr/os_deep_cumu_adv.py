@@ -20,6 +20,7 @@ from deeppdcfr.utils import (
     compute_lbr,
     play_n_games_against_random,
 )
+from deeppdcfr.parallel import compute_lbr_parallel
 
 
 class DeepCumuAdv:
@@ -333,11 +334,22 @@ class DeepCumuAdv:
                             return {action: policy[action] for action in s.legal_actions()}
                         return policy
 
-                lbr_exp = compute_lbr(
-                    self.game,
-                    policy_fn,
-                    self.num_lbr_samples,
-                )
+                if self.num_workers > 1:
+                    lbr_exp = compute_lbr_parallel(
+                        game_name=self.game_name,
+                        num_lbr_samples=self.num_lbr_samples,
+                        num_workers=self.num_workers,
+                        infostate_size=self.infostate_size,
+                        action_size=self.action_size,
+                        network_layers=self.network_layers,
+                        ave_policy_trainer=self.ave_policy_trainer,
+                    )
+                else:
+                    lbr_exp = compute_lbr(
+                        self.game,
+                        policy_fn,
+                        self.num_lbr_samples,
+                    )
                 self.logger.record("lbr_exp", lbr_exp)
             else:
                 reward = play_n_games_against_random(
