@@ -1059,8 +1059,11 @@ class QValueTrainer(Trainer):
         # Pre-compute strategies once (regret models are frozen during baseline training)
         all_next_strategies = self._precompute_next_strategies(T)
 
-        best_loss = float("inf")
-        patience = 200
+        best_ema_loss = float("inf")
+        ema_loss = None
+        ema_alpha = 0.05
+        min_delta = 1e-4
+        patience = 500
         steps_without_improvement = 0
         self.best_model = self.init_model()
         for train_step in range(self.train_steps + 1):
@@ -1097,8 +1100,13 @@ class QValueTrainer(Trainer):
                 self.target_model.load_state_dict(self.model.state_dict())
 
             current_loss = loss.item()
-            if current_loss < best_loss:
-                best_loss = current_loss
+            if ema_loss is None:
+                ema_loss = current_loss
+            else:
+                ema_loss = ema_alpha * current_loss + (1 - ema_alpha) * ema_loss
+
+            if ema_loss < best_ema_loss - min_delta:
+                best_ema_loss = ema_loss
                 self.best_model.load_state_dict(self.model.state_dict())
                 steps_without_improvement = 0
             else:
@@ -1106,21 +1114,21 @@ class QValueTrainer(Trainer):
 
             if train_step % 100 == 0:
                 self.logger.info(
-                    "[{}/{}] baseline loss: {} (best: {})".format(
-                        train_step, self.train_steps, current_loss, best_loss
+                    "[{}/{}] baseline loss: {} (ema: {:.6f}, best_ema: {:.6f})".format(
+                        train_step, self.train_steps, current_loss, ema_loss, best_ema_loss
                     )
                 )
 
             if steps_without_improvement >= patience:
                 self.logger.info(
-                    "early stop baseline at step {}/{}: best_loss {}".format(
-                        train_step, self.train_steps, best_loss
+                    "early stop baseline at step {}/{}: best_ema_loss {:.6f}".format(
+                        train_step, self.train_steps, best_ema_loss
                     )
                 )
                 break
 
         self.model.load_state_dict(self.best_model.state_dict())
-        return best_loss
+        return best_ema_loss
 
     def forward(self, x):
         with torch.device(self.device):
